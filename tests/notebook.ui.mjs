@@ -109,7 +109,7 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   const panel = page.locator('.source-control-sidebar.active');
   await expect(panel.locator('.source-control-heading')).toHaveText('Notebook');
   await expect(panel).toContainText('.ipynb');
-  await expect(panel).toContainText('Read only');
+  await expect(panel).not.toContainText('Read only');
 
   async function open(name) {
     await page.evaluate(({ file, name }) => window.BOBO.workspace.openFile(file, name), { file: path.join(workspace, name), name });
@@ -161,10 +161,10 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
 
   await page.evaluate(() => window.BOBO.i18n.setLocale('zh-CN'));
   await expect(view.getByRole('button', { name: '原始 JSON' })).toBeVisible();
-  await expect(panel).toContainText('只读');
+  await expect(panel).not.toContainText('只读');
   await page.evaluate(() => window.BOBO.i18n.setLocale('ja'));
   await expect(view.getByRole('button', { name: '元の JSON' })).toBeVisible();
-  await expect(panel).toContainText('読み取り専用');
+  await expect(panel).not.toContainText('読み取り専用');
   await page.evaluate(() => window.BOBO.i18n.setLocale('en'));
 
   const invalid = await open('broken.ipynb');

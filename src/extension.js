@@ -20,8 +20,7 @@ export async function activate(context) {
     title: i18n.t('notebook'),
     summary: {
       items: [
-        { label: i18n.t('format'), value: '.ipynb' },
-        { label: i18n.t('mode'), value: i18n.t('readOnly') }
+        { label: i18n.t('format'), value: '.ipynb' }
       ]
     }
   });

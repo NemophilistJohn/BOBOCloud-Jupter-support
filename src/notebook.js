@@ -27,8 +27,7 @@ export async function activate(context) {
   const identity = node('div', 'nb-identity');
   const filename = node('h1', '', context.document.name);
   filename.title = context.document.name;
-  const modeLabel = node('span', 'nb-badge');
-  identity.append(filename, modeLabel);
+  identity.append(filename);
   const toolbar = node('div', 'nb-toolbar');
   const modes = node('div', 'nb-modes');
   const searchBox = node('label', 'nb-search');
@@ -232,7 +231,6 @@ export async function activate(context) {
   function draw() {
     currentDetails.clear();
     content.scrollTop = 0;
-    modeLabel.textContent = t('readOnly');
     for (const update of labels) update();
     search.placeholder = t('search');
     search.setAttribute('aria-label', t('search'));
@@ -278,8 +276,11 @@ export async function activate(context) {
       list.append(details);
       const excerpt = source.slice(0, 180).trim().replace(/^#{1,6}\s+/, '').split('\n')[0] || t(kind);
       const jump = node('button', 'nb-jump');
+      jump.dataset.kind = kind;
       jump.type = 'button';
-      jump.append(node('span', 'nb-ordinal', String(index + 1)), node('span', 'nb-excerpt', excerpt));
+      const marker = node('span', 'nb-kind-marker');
+      marker.setAttribute('aria-hidden', 'true');
+      jump.append(marker, node('span', 'nb-ordinal', String(index + 1)), node('span', 'nb-excerpt', excerpt));
       jump.title = excerpt;
       jump.addEventListener('click', () => {
         details.open = true;

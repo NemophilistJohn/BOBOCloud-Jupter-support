@@ -7,9 +7,9 @@ Install **Notebook Preview** in Extensions → Marketplace on BOBOCloud 2.8.1, e
 - **Original JSON** shows the unchanged file, including unknown fields and metadata. Large files are shown in pages.
 - The plugin reads only the file you opened. It does not execute code, write files, fetch external resources, or render widgets, scripts, or SVG.
 
-The Notebook activity item uses the host sidebar to show the supported file type and read-only mode. Open files from the workspace explorer; use the document outline to navigate cells. This plugin takes precedence over the general Document Preview for `.ipynb` files.
+The Notebook activity item shows the supported file type. Open files from the workspace explorer; use the document outline to navigate cells. This plugin takes precedence over the general Document Preview for `.ipynb` files.
 
-The Notebook activity item uses its own book icon on Plugin API 1.7.0 and later. On older clients it uses the default host icon.
+The Notebook activity item uses its own book icon on Plugin API 1.7.0 and later. On older clients it uses the default host icon. Markdown and code cells use matching color markers in the cell header and outline.
 
 The 24 MiB file limit applies to both views. Each preview text block is limited to 32,000 characters, each cell to 24 rendered outputs, and each image to 8 MiB of base64.
 

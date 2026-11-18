@@ -3,7 +3,7 @@
   "id": "bobocloud.notebook-preview",
   "displayName": "Notebook Preview",
   "description": "Read-only Jupyter Notebook preview with Markdown, math, and saved outputs.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "engines": { "bobocloud": ">=2.8.1 <2.9.0", "pluginApi": "^1.6.0" },
   "main": "dist/extension.js",
   "activationEvents": ["onStartupFinished"],
