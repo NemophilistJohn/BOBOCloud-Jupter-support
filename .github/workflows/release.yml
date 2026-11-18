@@ -12,13 +12,13 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    name: Verify Notebook on Plugin API 1.9
+    name: Verify Notebook on Plugin API 1.10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
           repository: NemophilistJohn/BOBOcloud-A-cloud-based-remote-compilation-platform
-          ref: 074e49a789b3503001e9675b4613ee526c57f1ec
+          ref: 68ce396ffbd49857c786e3513f6fbfa0b13da8ff
           path: host
           persist-credentials: false
       - uses: actions/setup-node@v4

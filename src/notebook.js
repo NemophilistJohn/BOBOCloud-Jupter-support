@@ -1,9 +1,10 @@
 import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Eraser,
-  Pencil, Save, Search, Trash2, Undo2, X, createElement } from 'lucide';
+  ListEnd, ListStart, Pencil, Play, RotateCcw, Save, Search, SkipForward, Trash2, Undo2, X, createElement } from 'lucide';
 import { CELL_PAGE_SIZE, embeddedImage, imageMimes, jsonPages, MAX_BYTES, MAX_OUTPUTS, MAX_RICH_TEXT,
   parseNotebook, plainOutput, searchCells, stripAnsi, textOf } from './notebook-model.js';
 import { markdownMarkup, mathMarkup, staticOutput } from './rich-content.js';
-import { draftCells, isPython, mapDiagnostics, projectPython, serializeDraft } from './notebook-edit.js';
+import { draftCells, executionBatch, executionCountOf, hasOutputs, isPython, mapDiagnostics,
+  outputsOf, projectPython, serializeDraft } from './notebook-edit.js';
 import { highlightCode } from './highlight.js';
 import { createCellEditor } from './cell-editor.js';
 
@@ -41,6 +42,8 @@ export async function activate(context) {
   search.maxLength = 240;
   searchBox.append(icon(Search), search);
   const utilities = node('div', 'nb-utilities');
+  const runStatus = node('span', 'nb-run-status');
+  runStatus.setAttribute('role', 'status');
   const counter = node('span', 'nb-count');
   counter.setAttribute('role', 'status');
   const pager = node('div', 'nb-pager');
@@ -61,6 +64,9 @@ export async function activate(context) {
   let edit;
   let saving;
   let saveMessage = '';
+  let running;
+  let restarting = false;
+  let kernelMessage;
   let analysisTimer;
   let revision = 0;
   let projection;
@@ -94,6 +100,9 @@ export async function activate(context) {
   }
   const collapse = button('collapse', ChevronsUp, () => setPageOpen(false));
   const expand = button('expand', ChevronsDown, () => setPageOpen(true));
+  const runAll = button('runAll', SkipForward, () => void run('all'));
+  const restart = button('restartKernel', RotateCcw, () => void restartKernel());
+  const clearAll = button('clearAllOutputs', Eraser, () => clearOutput(entries));
   function shiftPage(offset) {
     if (mode === 'preview') cellPage += offset;
     else rawPage += offset;
@@ -105,9 +114,9 @@ export async function activate(context) {
   const saveButton = button('save', Save, () => void save());
   const undoButton = button('undoCellAction', Undo2, undoAction);
   saveButton.hidden = !context.writeText;
-  identity.append(saveStatus);
+  identity.append(saveStatus, runStatus);
   pager.append(previous, pageLabel, next);
-  utilities.append(collapse, expand, undoButton, saveButton, counter, pager);
+  utilities.append(collapse, expand, runAll, restart, clearAll, undoButton, saveButton, counter, pager);
   toolbar.append(searchBox, utilities);
   search.addEventListener('input', () => {
     clearTimeout(searchTimer);
@@ -126,22 +135,37 @@ export async function activate(context) {
     const pending = dirty();
     context.setDirty?.(pending);
     view.dataset.dirty = String(pending);
-    saveButton.disabled = !pending || !!saving;
+    const locked = !!saving || !!running || restarting;
+    saveButton.disabled = !pending || locked;
     undoButton.hidden = !undo;
-    undoButton.disabled = !!saving;
+    undoButton.disabled = locked;
+    runAll.disabled = locked || !executionBatch(entries, 'all').length;
+    restart.disabled = !!saving || restarting;
+    clearAll.disabled = locked || !entries.some(hasOutputs);
+    runStatus.textContent = kernelMessage ? t(kernelMessage.key, kernelMessage.values) : '';
+    runStatus.classList.toggle('nb-error', !!kernelMessage?.error);
+    view.toggleAttribute('data-running', !!running || restarting);
+    const input = content.querySelector('textarea');
+    if (input) input.readOnly = locked;
+    for (const control of view.querySelectorAll('.nb-cell-actions button, .nb-run-cell')) {
+      if (control.dataset.inactive === undefined) control.dataset.inactive = String(control.disabled);
+      control.disabled = locked || control.dataset.inactive === 'true';
+    }
     saveStatus.textContent = saveMessage ? t(saveMessage) : pending ? t('unsaved') : '';
     saveStatus.classList.toggle('nb-error', ['saveConflict', 'saveFailed'].includes(saveMessage));
   }
 
-  function refresh(anchor, selector) {
-    result = searchCells(entries.map(({ cell, source, clearOutputs }) => ({
-      ...cell, source, outputs: clearOutputs ? [] : cell?.outputs
+  function refresh(anchor, selector, preserveScroll = false) {
+    const scrollTop = content.scrollTop;
+    result = searchCells(entries.map((entry) => ({
+      ...entry.cell, source: entry.source, outputs: outputsOf(entry)
     })), search.value);
     const index = anchor ? entries.indexOf(anchor) : -1;
     const position = result.indexOf(index);
     if (position >= 0) cellPage = Math.floor(position / CELL_PAGE_SIZE);
     cellPage = Math.min(cellPage, Math.max(0, Math.ceil(result.length / CELL_PAGE_SIZE) - 1));
     draw();
+    if (preserveScroll) content.scrollTop = scrollTop;
     if (anchor && selector) {
       const target = currentDetails.get(anchor)?.querySelector(selector);
       target?.focus({ preventScroll: true });
@@ -150,7 +174,7 @@ export async function activate(context) {
   }
 
   function markEntry(entry) {
-    if (entry.clearOutputs || entry.source !== textOf(entry.cell?.source)) dirtyEntries.add(entry);
+    if (entry.execution || entry.source !== textOf(entry.cell?.source)) dirtyEntries.add(entry);
     else dirtyEntries.delete(entry);
   }
 
@@ -164,7 +188,7 @@ export async function activate(context) {
   }
 
   function leaveEdit(discard) {
-    if (!edit || saving) return;
+    if (!edit || saving || running || restarting) return;
     const { entry, initial } = edit;
     if (discard) updateSource(entry, initial);
     edit = undefined;
@@ -172,7 +196,7 @@ export async function activate(context) {
   }
 
   function toggleEdit(entry) {
-    if (saving || !entry.cell || typeof entry.cell !== 'object' || Array.isArray(entry.cell)) return;
+    if (saving || running || restarting || !entry.cell || typeof entry.cell !== 'object' || Array.isArray(entry.cell)) return;
     if (edit?.entry === entry) {
       leaveEdit(false);
       return;
@@ -184,7 +208,7 @@ export async function activate(context) {
   }
 
   function move(index, delta) {
-    if (saving) return;
+    if (saving || running || restarting) return;
     const target = index + delta;
     const entry = entries[index];
     const other = entries[target];
@@ -208,29 +232,116 @@ export async function activate(context) {
     if (!entries.length) undoButton.focus();
   }
 
-  function clearOutput(entry) {
-    entry.clearOutputs = true;
-    markEntry(entry);
-    undo = { type: 'clear', entry };
+  function clearOutput(targets) {
+    if (saving || running || restarting) return;
+    const previous = [...new Set(Array.isArray(targets) ? targets : [targets])]
+      .filter((entry) => kindOf(entry) === 'code' && hasOutputs(entry))
+      .map((entry) => [entry, entry.execution]);
+    if (!previous.length) return;
+    for (const [entry] of previous) {
+      entry.execution = { outputs: [], count: null };
+      markEntry(entry);
+    }
+    undo = { type: 'clear', previous };
     if (saveMessage !== 'saveConflict') saveMessage = '';
-    refresh(entry, edit?.entry === entry ? 'textarea' : 'summary');
+    refresh(undefined, undefined, true);
   }
 
   function undoAction() {
-    if (saving || !undo) return;
-    const { type, entry, index, next } = undo;
+    if (saving || running || restarting || !undo) return;
+    const { type, entry, index, next, previous } = undo;
     undo = undefined;
     if (type === 'delete') {
       const before = entries.indexOf(next);
       entries.splice(before >= 0 ? before : Math.min(index, entries.length), 0, entry);
       scheduleAnalysis();
-    } else entry.clearOutputs = false;
+    } else {
+      for (const [cell, execution] of previous) {
+        cell.execution = execution;
+        markEntry(cell);
+      }
+      return refresh(undefined, undefined, true);
+    }
     markEntry(entry);
     refresh(entry, edit?.entry === entry ? 'textarea' : 'summary');
   }
 
+  function setKernelMessage(key, values, error = false) {
+    kernelMessage = { key, values, error };
+    syncStatus();
+  }
+
+  async function run(scope, anchor) {
+    if (!context.execute || saving || running || restarting) return;
+    const batch = executionBatch(entries, scope, anchor);
+    if (!batch.length) return;
+    if (dirty() && !await save()) {
+      if (valid) setKernelMessage('saveBeforeRun', undefined, true);
+      return;
+    }
+    if (!valid || running || restarting) return;
+    const operation = {};
+    running = operation;
+    try {
+      for (const entry of batch) {
+        const cell = entries.indexOf(entry) + 1;
+        setKernelMessage('runningCell', { cell });
+        const result = await context.execute({ kind: 'execute', code: entry.source });
+        if (!valid || running !== operation) return;
+        if (!result?.ok) {
+          const code = result?.code;
+          const key = code === 'dependencies_unavailable' ? 'kernelDependencies' :
+            code === 'resource_pressure' || code === 'container_unavailable' ? 'kernelCapacity' :
+            code === 'kernel_closed' ? 'kernelClosed' : code === 'cell_timeout' ? 'kernelTimeout' :
+            code === 'network_error' || code === 'not_configured' || code === 'unauthorized' ? 'kernelConnection' :
+            code === 'invalid_cell' ? 'kernelInvalidCell' : 'kernelFailed';
+          setKernelMessage(key, { cell }, true);
+          return;
+        }
+        // A previous clear must not undo the newly computed output.
+        if (undo?.type === 'clear') {
+          undo.previous = undo.previous.filter(([target]) => target !== entry);
+          if (!undo.previous.length) undo = undefined;
+        }
+        entry.execution = { outputs: result.outputs, count: result.executionCount };
+        markEntry(entry);
+        if (saveMessage !== 'saveConflict') saveMessage = '';
+        refresh(undefined, undefined, true);
+        if (!result.cellOk) {
+          setKernelMessage('cellFailed', { cell }, true);
+          return;
+        }
+      }
+      setKernelMessage('runFinished');
+    } catch {
+      if (valid && running === operation) setKernelMessage('kernelFailed', undefined, true);
+    } finally {
+      if (valid && running === operation) {
+        running = undefined;
+        draw(true);
+      }
+    }
+  }
+
+  async function restartKernel() {
+    if (!context.execute || saving || restarting) return;
+    running = undefined;
+    restarting = true;
+    setKernelMessage('restartingKernel');
+    try {
+      const result = await context.execute({ kind: 'restart' });
+      if (valid) setKernelMessage(result?.ok ? 'kernelRestarted' : 'kernelFailed', undefined, !result?.ok);
+    } catch {
+      if (valid) setKernelMessage('kernelFailed', undefined, true);
+    } finally {
+      restarting = false;
+      if (valid) draw(true);
+    }
+  }
+
   async function save() {
     if (!context.writeText) return false;
+    if (running || restarting) return false;
     if (saving) return saving;
     if (!dirty()) return true;
     saving = Promise.resolve().then(async () => {
@@ -243,7 +354,7 @@ export async function activate(context) {
         }
         notebook = parseNotebook(text);
         offsets = jsonPages(text);
-        entries.forEach((entry, slot) => { entry.cell = notebook.cells[slot]; entry.slot = slot; entry.clearOutputs = false; });
+        entries.forEach((entry, slot) => { entry.cell = notebook.cells[slot]; entry.slot = slot; entry.execution = undefined; });
         if (edit) edit.initial = edit.entry.source;
         undo = undefined;
         dirtyEntries.clear();
@@ -427,16 +538,25 @@ export async function activate(context) {
     const title = node('span', 'nb-kind', t(kind));
     summary.append(ordinal, title);
     if (kind === 'code' && notebook.language) summary.append(node('span', 'nb-cell-meta', notebook.language));
-    const execution = entry.clearOutputs ? null : cell?.execution_count;
+    const execution = executionCountOf(entry);
     if (kind === 'code' && Number.isSafeInteger(execution)) {
       summary.append(node('span', 'nb-execution', '[' + execution + ']'));
     }
-    if (context.writeText) {
+    const runnable = kind === 'code' && context.execute && isPython(notebook.language);
+    if (context.writeText || runnable) {
       const actions = node('span', 'nb-cell-actions');
       const action = (key, glyph, perform) => button(key, glyph, (event) => {
         event.preventDefault();
-        if (!saving) perform();
+        if (!saving && !running && !restarting) perform();
       }, false);
+      if (runnable) {
+        const above = action('runAbove', ListStart, () => void run('above', entry));
+        const below = action('runBelow', ListEnd, () => void run('below', entry));
+        above.disabled = !executionBatch(entries, 'above', entry).length;
+        below.disabled = !executionBatch(entries, 'below', entry).length;
+        actions.append(above, below);
+      }
+      if (context.writeText) {
       if (edit?.entry === entry) {
         actions.append(action('applyEdit', Check, () => leaveEdit(false)), action('cancelEdit', X, () => leaveEdit(true)));
       } else if (cell && typeof cell === 'object' && !Array.isArray(cell)) {
@@ -451,19 +571,20 @@ export async function activate(context) {
       down.disabled = index + 1 === entries.length;
       actions.append(up, down);
       if (kind === 'code') {
-        const clear = action('clearOutput', Eraser, () => clearOutput(entry));
-        clear.disabled = entry.clearOutputs || (!cell?.outputs?.length && execution == null);
+        const clear = action('clearOutput', Eraser, () => clearOutput([entry]));
+        clear.disabled = !hasOutputs(entry);
         actions.append(clear);
       }
       const remove = action('deleteCell', Trash2, () => deleteCell(entry));
       remove.classList.add('nb-delete');
       actions.append(remove);
-      summary.append(actions);
       details.addEventListener('dblclick', (event) => {
         if (event.target.closest('button, .nb-outputs, .nb-diagnostics') || saving) return;
         event.preventDefault();
         toggleEdit(entry);
       });
+      }
+      summary.append(actions);
     }
     details.append(summary);
     currentDetails.set(entry, details);
@@ -477,7 +598,7 @@ export async function activate(context) {
           onChange: (text) => updateSource(entry, text),
           complete: kind === 'code' && context.analyze && isPython(notebook.language) ? (cursor, text) => complete(entry, cursor, text) : null,
           finish: () => leaveEdit(false) });
-        editor.querySelector('textarea').readOnly = !!saving;
+        editor.querySelector('textarea').readOnly = !!saving || !!running || restarting;
         body.append(editor);
       } else if (kind === 'markdown') appendMarkdown(body, source, cell?.attachments);
       else if (kind === 'code') {
@@ -488,16 +609,17 @@ export async function activate(context) {
       }
       else appendText(body, source);
       if (kind === 'code' && context.analyze) body.append(node('ul', 'nb-diagnostics'));
-      if (!entry.clearOutputs && Array.isArray(cell?.outputs) && cell.outputs.length) {
+      const cellOutputs = outputsOf(entry);
+      if (Array.isArray(cellOutputs) && cellOutputs.length) {
         const outputs = node('details', 'nb-outputs');
         outputs.open = cell.metadata?.collapsed !== true && cell.metadata?.jupyter?.outputs_hidden !== true;
-        outputs.append(node('summary', '', t('outputs', { count: cell.outputs.length })));
+        outputs.append(node('summary', '', t('outputs', { count: cellOutputs.length })));
         let rendered = false;
         const renderOutputs = () => {
           if (!outputs.open || rendered) return;
           rendered = true;
-          for (const output of cell.outputs.slice(0, MAX_OUTPUTS)) appendOutput(outputs, output);
-          if (cell.outputs.length > MAX_OUTPUTS) outputs.append(status('truncated'));
+          for (const output of cellOutputs.slice(0, MAX_OUTPUTS)) appendOutput(outputs, output);
+          if (cellOutputs.length > MAX_OUTPUTS) outputs.append(status('truncated'));
         };
         outputs.addEventListener('toggle', renderOutputs);
         renderOutputs();
@@ -513,7 +635,15 @@ export async function activate(context) {
       materialize();
     });
     materialize();
-    return details;
+    const row = node('div', 'nb-cell-row');
+    row.append(details);
+    if (runnable) {
+      const single = button('runCell', Play, () => void run('one', entry), false);
+      single.classList.add('nb-run-cell');
+      single.disabled = !entry.source.trim();
+      row.append(single);
+    }
+    return row;
   }
 
   function kindOf(entry) {
@@ -550,9 +680,10 @@ export async function activate(context) {
     details.scrollIntoView({ block: 'start' });
   });
 
-  function draw() {
+  function draw(preserveScroll = false) {
     currentDetails.clear();
-    content.scrollTop = 0;
+    const scrollTop = preserveScroll ? content.scrollTop : 0;
+    if (!preserveScroll) content.scrollTop = 0;
     for (const update of labels) update();
     syncStatus();
     search.placeholder = t('search');
@@ -565,6 +696,9 @@ export async function activate(context) {
     toolbar.hidden = notebook?.raw === undefined;
     searchBox.hidden = !showCells;
     collapse.hidden = expand.hidden = !showCells || !result.length;
+    const supportsKernel = showCells && context.execute && isPython(notebook.language);
+    runAll.hidden = restart.hidden = !supportsKernel;
+    clearAll.hidden = !showCells || !context.writeText;
     previous.disabled = current === 0;
     next.disabled = current + 1 >= pages;
     pager.hidden = pages === 1;
@@ -592,6 +726,8 @@ export async function activate(context) {
       list.append(renderCell(index, entry.source, kindOf(entry)));
     }
     content.replaceChildren(list);
+    syncStatus();
+    if (preserveScroll) content.scrollTop = scrollTop;
   }
 
   if (context.document.size > MAX_BYTES) notebook = { error: 'tooLarge' };
@@ -603,7 +739,7 @@ export async function activate(context) {
     if (notebook.raw !== undefined) offsets = jsonPages(notebook.raw);
     refresh();
   }
-  const subscription = i18n.onDidChange(draw);
+  const subscription = i18n.onDidChange(() => draw(true));
   return () => {
     clearTimeout(searchTimer);
     clearTimeout(analysisTimer);

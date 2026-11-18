@@ -28,6 +28,9 @@
 .nb-identity h1 { font-size: 15px; font-weight: 650; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nb-save-status { margin-inline-start: auto; font-size: 12px; color: var(--nb-muted); text-align: end; }
 .nb-save-status:empty { display: none; }
+.nb-run-status { color: var(--nb-muted); font-size: 12px; min-width: 0; }
+.nb-run-status:empty { display: none; }
+.nb-identity { flex-wrap: wrap; }
 .nb-toolbar, .nb-utilities { flex-wrap: wrap; }
 .nb-toolbar { gap: 7px 12px; }
 .nb button { cursor: pointer; }
@@ -51,17 +54,19 @@
 .nb-pager { gap: 3px; }
 .nb-body { overflow: auto; min-width: 0; }
 .nb-cells { padding: 12px clamp(9px, 2vw, 26px) 26px; }
-.nb-cell { border: 1px solid var(--nb-line); border-top: 3px solid var(--nb-line); margin-bottom: 10px; border-radius: 6px; overflow: hidden; }
+.nb-cell-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: start; gap: 6px; margin-bottom: 10px; }
+.nb-cell-row:last-child { margin-bottom: 0; }
+.nb-cell { border: 1px solid var(--nb-line); border-top: 3px solid var(--nb-line); border-radius: 6px; overflow: hidden; }
+.nb .nb-run-cell { margin-top: 5px; color: var(--nb-code-accent); border-color: var(--nb-line); }
 .nb-cell[data-kind="markdown"] { border-top-color: var(--nb-markdown-accent); }
 .nb-cell[data-kind="code"] { border-top-color: var(--nb-code-accent); }
-.nb-cell:last-child { margin-bottom: 0; }
 .nb-cell > summary, .nb-outputs > summary {
   cursor: pointer; background: var(--nb-raised); padding: 7px 10px; overflow-wrap: anywhere;
 }
 .nb-cell > summary::marker, .nb-outputs > summary::marker { color: var(--nb-muted); }
 .nb-cell[open] > summary { border-bottom: 1px solid var(--nb-line); }
 .nb-cell > summary { position: relative; min-height: 37px; }
-.nb-cell > summary:has(.nb-cell-actions) { padding-inline-end: 179px; }
+.nb-cell > summary:has(.nb-cell-actions) { padding-inline-end: 234px; }
 .nb-cell-actions { position: absolute; inset-inline-end: 5px; top: 4px; display: inline-flex; gap: 1px; }
 .nb-cell-actions .nb-icon-button { width: 27px; height: 27px; }
 .nb-cell-actions .nb-delete:hover { color: var(--nb-error); }

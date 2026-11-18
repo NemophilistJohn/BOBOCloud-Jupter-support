@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "id": "bobocloud.notebook-preview",
   "displayName": "Notebook Preview",
-  "description": "Open and edit Jupyter notebooks with sidebar navigation and offline Markdown, math, and saved outputs.",
-  "version": "1.2.0",
-  "engines": { "bobocloud": ">=2.8.1 <2.9.0", "pluginApi": "^1.9.0" },
+  "description": "Open, edit, and run Python notebooks with sidebar navigation and offline previews.",
+  "version": "1.3.0",
+  "engines": { "bobocloud": ">=2.8.1 <2.9.0", "pluginApi": "^1.10.0" },
   "main": "dist/extension.js",
   "activationEvents": ["onStartupFinished"],
-  "permissions": ["documentViews.register", "documents.read", "documents.write", "documents.analyze", "sourceControl.register"],
+  "permissions": ["documentViews.register", "documents.read", "documents.write", "documents.analyze", "documents.execute", "sourceControl.register"],
   "contributes": {
     "documentViewers": [{
       "id": "bobocloud.notebook-preview.jupyter",

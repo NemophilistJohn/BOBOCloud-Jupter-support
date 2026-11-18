@@ -6,7 +6,19 @@ export const MAX_PROJECTION = 256 * 1024;
 const sourceLineEndings = (source) => source.replace(/\r\n?/g, '\n');
 
 export function draftCells(notebook) {
-  return notebook.cells.map((cell, slot) => ({ id: 'cell:' + slot, slot, cell, source: textOf(cell?.source), clearOutputs: false }));
+  return notebook.cells.map((cell, slot) => ({ id: 'cell:' + slot, slot, cell, source: textOf(cell?.source) }));
+}
+
+export const outputsOf = (entry) => entry.execution ? entry.execution.outputs : entry.cell?.outputs;
+export const executionCountOf = (entry) => entry.execution ? entry.execution.count : entry.cell?.execution_count;
+export const hasOutputs = (entry) => !!outputsOf(entry)?.length || executionCountOf(entry) != null;
+
+export function executionBatch(entries, scope, anchor) {
+  const index = entries.indexOf(anchor);
+  if (scope !== 'all' && index < 0) return [];
+  const range = scope === 'above' ? entries.slice(0, index) :
+    scope === 'below' ? entries.slice(index) : scope === 'one' ? [anchor] : entries;
+  return range.filter((entry) => entry.cell?.cell_type === 'code' && entry.source.trim());
 }
 
 export function serializeDraft(raw, entries) {
@@ -42,9 +54,9 @@ export function serializeDraft(raw, entries) {
         ? entry.source.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [] : entry.source;
       replaceField('source', source);
     }
-    if (entry.clearOutputs) {
-      replaceField('outputs', []);
-      replaceField('execution_count', null);
+    if (entry.execution) {
+      replaceField('outputs', entry.execution.outputs);
+      replaceField('execution_count', entry.execution.count);
     }
     cell = applyEdits(cell, patches);
     for (const [name, value] of missing) cell = applyEdits(cell, modify(cell, [name], value, {}));

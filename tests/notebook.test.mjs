@@ -5,7 +5,7 @@ import test from 'node:test';
 import { unzipSync } from 'fflate';
 import { embeddedImage, jsonPages, JSON_PAGE_SIZE, parseNotebook, searchCells } from '../src/notebook-model.js';
 import { markdownMarkup } from '../src/rich-content.js';
-import { draftCells, mapDiagnostics, projectPython, serializeDraft } from '../src/notebook-edit.js';
+import { draftCells, executionBatch, mapDiagnostics, projectPython, serializeDraft } from '../src/notebook-edit.js';
 
 test('edits and reorders without reserializing unknown data, outputs, or large integers', () => {
   const raw = '\uFEFF{\r\n "nbformat":4,"cells":[\r\n' +
@@ -44,13 +44,30 @@ test('removes selected cells and clears saved output without reserializing survi
     '{"source":"also deleted"}\n ], "extra":1e+03}';
   const [, cell] = draftCells(parseNotebook(raw));
   cell.source = 'updated';
-  cell.clearOutputs = true;
+  cell.execution = { outputs: [], count: null };
   const saved = serializeDraft(raw, [cell]);
   assert.match(saved, /"large":9007199254740995/);
   assert.match(saved, /"extra":1e\+03/);
   assert.deepEqual(parseNotebook(saved).cells, [{ cell_type: 'code', source: 'updated',
     metadata: { large: 9007199254740996 }, outputs: [], execution_count: null }]);
   assert.deepEqual(parseNotebook(serializeDraft(saved, [])).cells, []);
+});
+
+test('runs the requested range in document order and writes only the changed outputs', () => {
+  const raw = '{"nbformat":4,"cells":[{"cell_type":"code","source":"x=3","outputs":[{"unknown":1}]},{"cell_type":"markdown","source":"skip"},{"cell_type":"code","source":"x+1","metadata":{"unknown":9007199254740995}},{"cell_type":"code","source":" "},{"cell_type":"code","source":"x+2"}]}';
+  const entries = draftCells(parseNotebook(raw));
+  const [first,, middle,, last] = entries;
+  assert.deepEqual(executionBatch(entries, 'all'), [first, middle, last]);
+  assert.deepEqual(executionBatch(entries, 'above', middle), [first]);
+  assert.deepEqual(executionBatch(entries, 'below', middle), [middle, last]);
+  assert.deepEqual(executionBatch(entries, 'one', middle), [middle]);
+  middle.execution = { count: 2, outputs: [{ output_type: 'stream', name: 'stdout', text: '4' }] };
+  const saved = serializeDraft(raw, entries);
+  assert.match(saved, /9007199254740995/);
+  const model = parseNotebook(saved);
+  assert.deepEqual(model.cells[0].outputs, [{ unknown: 1 }]);
+  assert.equal(model.cells[2].execution_count, 2);
+  assert.deepEqual(model.cells[2].outputs, middle.execution.outputs);
 });
 
 test('retains unfamiliar data and the raw text, including invalid JSON', () => {
@@ -106,7 +123,7 @@ test('archive has the expected entries, matching hashes and equivalent locale pl
     'manifest.json', manifest.main, ...manifest.contributes.documentViewers.flatMap((view) => [view.entry, ...view.resources]),
     ...new Set(Object.values(manifest.localization)), 'THIRD-PARTY.txt'
   ].sort());
-  assert.deepEqual(manifest.permissions, ['documentViews.register', 'documents.read', 'documents.write', 'documents.analyze', 'sourceControl.register']);
+  assert.deepEqual(manifest.permissions, ['documentViews.register', 'documents.read', 'documents.write', 'documents.analyze', 'documents.execute', 'sourceControl.register']);
   assert.deepEqual(Object.keys(manifest.integrity.files).sort(), Object.keys(entries).filter((file) => file !== 'manifest.json').sort());
   for (const [name, digest] of Object.entries(manifest.integrity.files)) {
     assert.equal(createHash('sha256').update(entries[name]).digest('hex'), digest);
