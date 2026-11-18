@@ -7,7 +7,8 @@ import test from 'node:test';
 
 const root = path.resolve(import.meta.dirname, '..');
 const host = path.resolve(process.env.BOBOCLOUD_HOST_CLIENT || path.join(root, '..', 'my-electron-app', 'client'));
-const archive = path.join(root, 'artifacts', 'bobocloud.notebook-preview-1.0.0.boboplugin');
+const { version } = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
+const archive = path.join(root, 'artifacts', 'bobocloud.notebook-preview-' + version + '.boboplugin');
 const general = path.resolve(process.env.BOBOCLOUD_GENERAL_PREVIEW_ARTIFACT || path.join(
   root, '..', 'bobocloud-document-preview', 'artifacts', 'bobocloud.document-preview-1.1.1.boboplugin'
 ));
@@ -98,6 +99,12 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   await expect.poll(viewer).toBe(id);
   const activity = page.locator('.source-control-activity');
   await expect(activity).toHaveCount(1);
+  if (process.env.BOBOCLOUD_EXPECT_LEGACY_SIDEBAR_ICON === '1') {
+    await expect(activity.locator('svg circle')).toHaveCount(3);
+  } else {
+    await expect(activity.locator('svg[data-sidebar-icon="notebook"] path')).toHaveCount(2);
+    await activity.screenshot({ path: path.join(root, 'test-results', 'notebook-sidebar-icon.png') });
+  }
   await activity.click();
   const panel = page.locator('.source-control-sidebar.active');
   await expect(panel.locator('.source-control-heading')).toHaveText('Notebook');

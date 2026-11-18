@@ -2,6 +2,8 @@ const id = 'bobocloud.notebook-preview';
 
 export async function activate(context) {
   const { i18n, subscriptions } = context;
+  const [major, minor] = context.apiVersion.split('.').map(Number);
+  const notebookIcon = major > 1 || (major === 1 && minor >= 7);
   subscriptions.add(await context.documentViews.register({
     id: id + '.jupyter',
     title: i18n.t('preview')
@@ -9,7 +11,7 @@ export async function activate(context) {
   const sidebar = await context.sourceControl.register({
     id: id + '.sidebar',
     title: i18n.t('notebook'),
-    icon: 'git-branch',
+    ...(notebookIcon ? { icon: 'notebook' } : {}),
     order: 30
   });
   subscriptions.add(sidebar);

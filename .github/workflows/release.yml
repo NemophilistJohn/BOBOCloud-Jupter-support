@@ -12,12 +12,23 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    name: Verify (${{ matrix.host.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - label: default-icon
+            ref: bb472ea459ede2e9eebc84b100f4777b368587e3
+            legacyIcon: "1"
+          - label: notebook-icon
+            ref: 3f300ddad97d6598e2c2cc29a67bc63f3b385517
+            legacyIcon: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
           repository: NemophilistJohn/BOBOcloud-A-cloud-based-remote-compilation-platform
-          ref: bb472ea459ede2e9eebc84b100f4777b368587e3
+          ref: ${{ matrix.host.ref }}
           path: host
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -44,10 +55,11 @@ jobs:
         env:
           BOBOCLOUD_HOST_CLIENT: ${{ github.workspace }}/host/client
           BOBOCLOUD_GENERAL_PREVIEW_ARTIFACT: ${{ runner.temp }}/general-preview.boboplugin
+          BOBOCLOUD_EXPECT_LEGACY_SIDEBAR_ICON: ${{ matrix.host.legacyIcon }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: notebook-ui-evidence
+          name: notebook-ui-evidence-${{ matrix.host.label }}
           path: test-results/
 
   release:
