@@ -187,6 +187,9 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   await writeFile(actionsPath, raw);
   const actions = await open('actions.ipynb');
   const code = actions.locator('#cell-2');
+  const cellRow = code.locator('xpath=..');
+  await expect(cellRow.locator('.nb-run-cell')).toHaveCount(1);
+  assert.equal(await cellRow.evaluate((row) => row.firstElementChild?.classList.contains('nb-run-cell')), true);
   await code.locator('.nb-code').dblclick();
   const editField = code.getByRole('textbox', { name: 'Cell source' });
   await editField.fill('print("draft")');

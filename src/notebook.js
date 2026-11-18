@@ -636,12 +636,13 @@ export async function activate(context) {
     });
     materialize();
     const row = node('div', 'nb-cell-row');
-    row.append(details);
     if (runnable) {
       const single = button('runCell', Play, () => void run('one', entry), false);
       single.classList.add('nb-run-cell');
       single.disabled = !entry.source.trim();
-      row.append(single);
+      row.append(single, details);
+    } else {
+      row.append(details);
     }
     return row;
   }

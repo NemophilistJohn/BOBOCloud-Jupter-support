@@ -15,7 +15,11 @@ export function parseNotebook(raw) {
     return { error: 'invalidNotebook', raw };
   }
   const language = value.metadata?.language_info?.name ?? value.metadata?.kernelspec?.language;
-  return { raw, value, cells: value.cells, language: typeof language === 'string' ? language.slice(0, 48) : '' };
+  // Jupyter files without kernelspec metadata are conventionally Python
+  // notebooks. Keep an explicit non-Python language intact for read-only
+  // preview while allowing the default notebook path to run Python cells.
+  return { raw, value, cells: value.cells, language: typeof language === 'string' && language.trim()
+    ? language.slice(0, 48) : 'python' };
 }
 
 export function plainOutput(output) {

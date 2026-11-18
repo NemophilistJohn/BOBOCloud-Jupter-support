@@ -85,6 +85,11 @@ test('retains unfamiliar data and the raw text, including invalid JSON', () => {
   assert.equal(pages[2], '\r\nEND');
 });
 
+test('defaults notebooks without kernel metadata to Python', () => {
+  const model = parseNotebook('{"nbformat":4,"cells":[{"cell_type":"code","source":"1+1"}]}');
+  assert.equal(model.language, 'python');
+});
+
 test('search matches normalized source and saved text; ignores HTML and base64', () => {
   const cells = [
     { source: ['caf', 'e\u0301'], outputs: [{ data: { 'text/plain': 'AcCuRaCy 99%' } }] },
