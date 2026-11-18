@@ -5,6 +5,37 @@ import test from 'node:test';
 import { unzipSync } from 'fflate';
 import { embeddedImage, jsonPages, JSON_PAGE_SIZE, parseNotebook, searchCells } from '../src/notebook-model.js';
 import { markdownMarkup } from '../src/rich-content.js';
+import { draftCells, mapDiagnostics, projectPython, serializeDraft } from '../src/notebook-edit.js';
+
+test('edits and reorders without reserializing unknown data, outputs, or large integers', () => {
+  const raw = '\uFEFF{\r\n "nbformat":4,"cells":[\r\n' +
+    ' {"id":"x","source":["first\\n","line"],"unknown":{"number":9007199254740995}},\r\n' +
+    ' {"id":"x","source":"second","outputs":[ {"extra":"\\u2603"} ]}\r\n ],"extra":1e+03\r\n}\r\n';
+  const set = draftCells(parseNotebook(raw));
+  set[0].source = 'changed\r\nline\n';
+  const saved = serializeDraft(raw, set.reverse());
+  assert.match(saved, /^\uFEFF\{\r\n/);
+  assert.match(saved, /"number":9007199254740995/);
+  assert.match(saved, /"outputs":\[ \{"extra":"\\u2603"\} \]/);
+  assert.match(saved, /"extra":1e\+03/);
+  assert.deepEqual(parseNotebook(saved).cells.map((cell) => cell.source), ['second', ['changed\r\n', 'line\n']]);
+});
+
+test('projects imports before later uses and remaps diagnostics after reorder by cell identity', () => {
+  const entries = draftCells({ cells: [
+    { cell_type: 'code', source: 'import math as m' },
+    { cell_type: 'markdown', source: 'm.fake' },
+    { cell_type: 'code', source: '%time something\nm.sq' }
+  ] });
+  const projection = projectPython(entries);
+  assert.equal(projection.text, 'import math as m\n\n' + ' '.repeat(15) + '\nm.sq\n\n');
+  const [first,, last] = entries;
+  const item = { line: 3, character: 2, message: 'suggest' };
+  assert.deepEqual(mapDiagnostics(projection, [item]).get(last), [{ ...item, line: 1 }]);
+  const reordered = projectPython(entries.reverse());
+  assert.deepEqual(mapDiagnostics(reordered, [{ ...item, line: 1 }]).get(last), [{ ...item, line: 1 }]);
+  assert.equal(reordered.ranges.at(-1).entry, first);
+});
 
 test('retains unfamiliar data and the raw text, including invalid JSON', () => {
   const raw = '\uFEFF{\r\n  "nbformat": 4, "cells": [{"metadata":{"extra":{"word":"\u96EA"}}}], "vendor":{"big":9007199254740995}\r\n}\r\n';
@@ -59,7 +90,7 @@ test('archive has the expected entries, matching hashes and equivalent locale pl
     'manifest.json', manifest.main, ...manifest.contributes.documentViewers.flatMap((view) => [view.entry, ...view.resources]),
     ...new Set(Object.values(manifest.localization)), 'THIRD-PARTY.txt'
   ].sort());
-  assert.deepEqual(manifest.permissions, ['documentViews.register', 'documents.read', 'sourceControl.register']);
+  assert.deepEqual(manifest.permissions, ['documentViews.register', 'documents.read', 'documents.write', 'documents.analyze', 'sourceControl.register']);
   assert.deepEqual(Object.keys(manifest.integrity.files).sort(), Object.keys(entries).filter((file) => file !== 'manifest.json').sort());
   for (const [name, digest] of Object.entries(manifest.integrity.files)) {
     assert.equal(createHash('sha256').update(entries[name]).digest('hex'), digest);

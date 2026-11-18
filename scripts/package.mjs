@@ -33,7 +33,8 @@ async function notices() {
   const licenses = [
     'temml/LICENSE', 'markdown-it/LICENSE', '@mdit/plugin-tex/LICENSE', '@mdit/helper/LICENSE',
     'dompurify/LICENSE-MPL', 'lucide/LICENSE', 'argparse/LICENSE', 'entities/LICENSE',
-    'linkify-it/LICENSE', 'mdurl/LICENSE', 'punycode.js/LICENSE-MIT.txt', 'uc.micro/LICENSE.txt'
+    'linkify-it/LICENSE', 'mdurl/LICENSE', 'punycode.js/LICENSE-MIT.txt', 'uc.micro/LICENSE.txt',
+    'highlight.js/LICENSE', 'jsonc-parser/LICENSE.md'
   ];
   return (await Promise.all(licenses.map(async (file) => file + '\n' + await readText('node_modules/' + file)))).join('\n\n');
 }

@@ -1,15 +1,17 @@
 # BOBOCloud Notebook Preview
 
-Install **Notebook Preview** in Extensions → Marketplace on BOBOCloud 2.8.1, enable it, then open an `.ipynb` file in the workspace. You can also import the package from [Releases](https://github.com/NemophilistJohn/BOBOCloud-Jupter-support/releases).
+Install **Notebook Preview** in Extensions → Marketplace, enable it, then open an `.ipynb` file in the workspace. Version 1.1 needs BOBOCloud 2.8.1 with Plugin API 1.8 or later. You can also import the package from [Releases](https://github.com/NemophilistJohn/BOBOCloud-Jupter-support/releases); older hosts can use version 1.0.2.
 
-- Preview format 4 notebook code, Markdown, TeX math, saved text and tracebacks, raster images, and static tables.
+- Preview format 4 notebook code with offline syntax highlighting, Markdown, TeX math, saved text and tracebacks, raster images, and static tables.
 - Jump to a cell from the outline, collapse cells and outputs, or filter by source and saved text. The toolbar expands or collapses the current page.
-- **Original JSON** shows the unchanged file, including unknown fields and metadata. Large files are shown in pages.
-- The plugin reads only the file you opened. It does not execute code, write files, fetch external resources, or render widgets, scripts, or SVG.
+- Use the cell toolbar to edit or move one cell at a time. Save with the toolbar or Ctrl/Cmd+S. The host checks for external changes before writing. A conflict leaves the draft open.
+- **Original JSON** shows the last loaded or saved version, including unknown metadata and outputs. Saving changes only cell source and order. Large files are shown in pages.
+- Python completion (Ctrl+Space or after a dot) and diagnostics use the configured remote analyzer when enabled. The editor analyzes code cells together in notebook order. IPython magic and shell escapes are skipped.
+- The plugin does not execute code, load external preview resources, or render widgets, scripts, or SVG.
 
 The Notebook activity item shows the supported file type. Open files from the workspace explorer; use the document outline to navigate cells. This plugin takes precedence over the general Document Preview for `.ipynb` files.
 
-The Notebook activity item uses its own book icon on Plugin API 1.7.0 and later. On older clients it uses the default host icon. Markdown and code cells use matching color markers in the cell header and outline.
+The Notebook activity item uses a book icon. Markdown and code cells use matching color markers in the cell header and outline.
 
 The 24 MiB file limit applies to both views. Each preview text block is limited to 32,000 characters, each cell to 24 rendered outputs, and each image to 8 MiB of base64.
 

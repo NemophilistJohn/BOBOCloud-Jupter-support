@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import http from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,6 +43,7 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   const hostRequire = createRequire(path.join(host, 'package.json'));
   const { _electron: electron, expect } = hostRequire('playwright/test');
   const { createPluginController } = hostRequire('./main/plugins.js');
+  const { WebSocketServer } = hostRequire('ws');
   const base = path.resolve(os.tmpdir());
   const sandbox = await mkdtemp(path.join(base, 'bobo-notebook-preview-'));
   let app;
@@ -63,6 +65,10 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   await writeFile(path.join(workspace, 'analysis.ipynb'), raw);
   await writeFile(path.join(workspace, 'broken.ipynb'), broken);
   await writeFile(path.join(workspace, 'empty.ipynb'), '{"nbformat":4,"cells":[]}');
+  const editable = path.join(workspace, 'editable.ipynb');
+  await writeFile(editable, '{"nbformat":4,"metadata":{"lang":"python","extra":9007199254740995},"cells":[' +
+    '{"cell_type":"code","source":["import math as m"],"metadata":{"one":true}},' +
+    '{"cell_type":"code","source":"m.sq","outputs":[],"metadata":{"two":true}}]}');
 
   app = await electron.launch({
     executablePath: path.join(host, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron'),
@@ -99,12 +105,8 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   await expect.poll(viewer).toBe(id);
   const activity = page.locator('.source-control-activity');
   await expect(activity).toHaveCount(1);
-  if (process.env.BOBOCLOUD_EXPECT_LEGACY_SIDEBAR_ICON === '1') {
-    await expect(activity.locator('svg circle')).toHaveCount(3);
-  } else {
-    await expect(activity.locator('svg[data-sidebar-icon="notebook"] path')).toHaveCount(2);
-    await activity.screenshot({ path: path.join(root, 'test-results', 'notebook-sidebar-icon.png') });
-  }
+  await expect(activity.locator('svg[data-sidebar-icon="notebook"] path')).toHaveCount(2);
+  await activity.screenshot({ path: path.join(root, 'test-results', 'notebook-sidebar-icon.png') });
   await activity.click();
   const panel = page.locator('.source-control-sidebar.active');
   await expect(panel.locator('.source-control-heading')).toHaveText('Notebook');
@@ -173,6 +175,88 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   assert.equal(await invalid.locator('.nb-json').textContent(), broken);
   const empty = await open('empty.ipynb');
   await expect(empty.getByText('This notebook has no cells.')).toBeVisible();
+
+  const editor = await open('editable.ipynb');
+  await expect(editor.locator('.hljs-keyword').first()).toHaveText('import');
+  const server = http.createServer((_req, res) => { res.writeHead(404); res.end(); });
+  const sockets = new WebSocketServer({ server, path: '/lsp' });
+  t.after(async () => {
+    for (const socket of sockets.clients) socket.terminate();
+    await new Promise((resolve) => sockets.close(resolve));
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const documents = new Map();
+  const requestsByPosition = [];
+  let pushDiagnostic;
+  sockets.on('connection', (socket) => {
+    const send = (message) => socket.send(JSON.stringify(message));
+    pushDiagnostic = (uri, version, line, message) => send({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics',
+      params: { uri, version, diagnostics: [{ message, severity: 1,
+        range: { start: { line, character: 0 }, end: { line, character: 1 } } }] } });
+    socket.on('message', (bytes) => {
+      const message = JSON.parse(bytes);
+      const { method, params, id: requestId } = message;
+      if (message.type === 'lsp.start') send({ type: 'lsp.ready', sessionId: 'notebook-fixture',
+        dependency: { status: 'empty', revision: 'fixture' } });
+      else if (method === 'initialize') send({ jsonrpc: '2.0', id: requestId,
+        result: { capabilities: { textDocumentSync: 1, completionProvider: { triggerCharacters: ['.'] } } } });
+      else if (method === 'textDocument/didOpen') documents.set(params.textDocument.uri, params.textDocument);
+      else if (method === 'textDocument/didChange') documents.set(params.textDocument.uri, {
+        ...params.textDocument, text: params.contentChanges.at(-1).text
+      });
+      else if (method === 'textDocument/completion') {
+        requestsByPosition.push(params.position);
+        const lines = documents.get(params.textDocument.uri)?.text.split('\n') ?? [];
+        const prefix = lines.slice(0, params.position.line).join('\n');
+        send({ jsonrpc: '2.0', id: requestId, result: { items: prefix.includes('import math as m')
+          ? [{ label: 'sqrt', insertText: 'sqrt' }] : [] } });
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await page.evaluate(async (port) => {
+    const bobo = window.BOBO;
+    const config = { ip: '127.0.0.1', wsPort: port, httpPort: port, secureTransport: false, setupCompleted: true };
+    await window.api.writeServerSettings(config);
+    bobo.state.serverSettings = config;
+    bobo.state.serverCapabilities = bobo.serverCapabilities.inspectServerInfo({ success: true, data: {} });
+    bobo.sendToServer = async () => ({ success: true, data: { languages: ['python'] } });
+    await bobo.lsp._helpers.refreshCapabilities();
+    await bobo.lsp.setMode('full');
+  }, server.address().port);
+  const cell = (index) => editor.locator('#cell-' + index);
+  await cell(2).getByRole('button', { name: 'Edit cell' }).click();
+  const field = editor.getByRole('textbox', { name: 'Cell source' });
+  await expect.poll(() => page.evaluate(() => window.BOBO.lsp.getStatus().state)).toBe('ready');
+  await field.press('End');
+  await field.press('Control+Space');
+  await expect(editor.getByRole('button', { name: 'sqrt', exact: true })).toBeVisible();
+  assert.deepEqual(requestsByPosition, [{ line: 2, character: 4 }]);
+  const [[uri, original]] = documents;
+  assert.match(uri, /__bobo_notebook_.*\.py$/);
+  pushDiagnostic(uri, original.version, 2, 'Original diagnostic');
+  await expect(cell(2).getByText('Line 1: Original diagnostic')).toBeVisible();
+  await field.press('Enter');
+  await expect(field).toHaveValue('m.sqrt');
+  await cell(2).getByRole('button', { name: 'Move cell up' }).click();
+  await expect(cell(1).getByRole('textbox')).toHaveValue('m.sqrt');
+  await expect.poll(() => documents.get(uri).text).toBe('m.sqrt\n\nimport math as m\n\n');
+  pushDiagnostic(uri, original.version, 2, 'Late diagnostic');
+  pushDiagnostic(uri, documents.get(uri).version, 0, 'Current diagnostic');
+  await expect(cell(1).getByText('Line 1: Current diagnostic')).toBeVisible();
+  await expect(editor.getByText('Late diagnostic', { exact: false })).toHaveCount(0);
+  await editor.getByRole('button', { name: 'Save notebook' }).click();
+  await expect(editor.getByText('Saved', { exact: true })).toBeVisible();
+  const written = await readFile(editable, 'utf8');
+  assert.match(written, /9007199254740995/);
+  assert.deepEqual(JSON.parse(written).cells.map((item) => item.source), ['m.sqrt', ['import math as m']]);
+  await field.fill('m.sin');
+  await writeFile(editable, written + '\n');
+  await field.press('Control+s');
+  await expect(editor.getByText('File changed on disk. Your edits are still here.')).toBeVisible();
+  assert.equal(await readFile(editable, 'utf8'), written + '\n');
+  await expect(field).toHaveValue('m.sin');
+  await page.screenshot({ path: path.join(root, 'test-results', 'notebook-edit.png') });
 
   await page.evaluate((pluginId) => window.api.plugins.disable(pluginId), id);
   await expect(activity).toHaveCount(0);

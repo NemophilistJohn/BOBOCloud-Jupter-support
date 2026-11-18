@@ -1,7 +1,11 @@
-import { Braces, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Eye, Search, createElement } from 'lucide';
+import { ArrowDown, ArrowUp, Braces, Check, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Eye,
+  Pencil, Save, Search, X, createElement } from 'lucide';
 import { CELL_PAGE_SIZE, embeddedImage, imageMimes, jsonPages, MAX_BYTES, MAX_OUTPUTS, MAX_RICH_TEXT,
   parseNotebook, plainOutput, searchCells, stripAnsi, textOf } from './notebook-model.js';
 import { markdownMarkup, mathMarkup, staticOutput } from './rich-content.js';
+import { draftCells, isPython, mapDiagnostics, projectPython, serializeDraft } from './notebook-edit.js';
+import { highlightCode } from './highlight.js';
+import { createCellEditor } from './cell-editor.js';
 
 function node(tag, className, text) {
   const result = document.createElement(tag);
@@ -29,6 +33,8 @@ export async function activate(context) {
   filename.title = context.document.name;
   identity.append(filename);
   const toolbar = node('div', 'nb-toolbar');
+  const saveStatus = node('span', 'nb-save-status');
+  saveStatus.setAttribute('role', 'status');
   const modes = node('div', 'nb-modes');
   const searchBox = node('label', 'nb-search');
   const search = node('input');
@@ -52,21 +58,35 @@ export async function activate(context) {
   let cellPage = 0;
   let rawPage = 0;
   let searchTimer;
+  let entries = [];
+  let edit;
+  let saving;
+  let saveMessage = '';
+  let analysisTimer;
+  let revision = 0;
+  let projection;
+  let analysisWork = Promise.resolve();
+  let valid = true;
+  let diagnostics = new Map();
+  const dirtyEntries = new Set();
+  let displaced = 0;
   const openOverrides = new Map();
   const currentDetails = new Map();
   const labels = [];
 
-  function button(key, glyph, action, showLabel = false) {
+  function button(key, glyph, action, showLabel = false, persistent = true) {
     const control = node('button', showLabel ? 'nb-mode' : 'nb-icon-button');
     control.type = 'button';
     control.append(icon(glyph));
     const label = node('span');
     if (showLabel) control.append(label);
-    labels.push(() => {
+    const localize = () => {
       control.title = t(key);
       control.setAttribute('aria-label', t(key));
       label.textContent = t(key);
-    });
+    };
+    localize();
+    if (persistent) labels.push(localize);
     control.addEventListener('click', action);
     return control;
   }
@@ -89,16 +109,184 @@ export async function activate(context) {
   }
   const previous = button('previous', ChevronLeft, () => shiftPage(-1));
   const next = button('next', ChevronRight, () => shiftPage(1));
+  const saveButton = button('save', Save, () => void save());
+  saveButton.hidden = !context.writeText;
+  identity.append(saveStatus);
   pager.append(previous, pageLabel, next);
-  utilities.append(collapse, expand, counter, pager);
+  utilities.append(collapse, expand, saveButton, counter, pager);
   toolbar.append(modes, searchBox, utilities);
   search.addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
-      result = searchCells(notebook.cells, search.value);
       cellPage = 0;
-      draw();
+      refresh();
     }, 90);
+  });
+
+  function dirty() { return displaced > 0 || dirtyEntries.size > 0; }
+
+  function syncStatus() {
+    const pending = dirty();
+    context.setDirty?.(pending);
+    view.dataset.dirty = String(pending);
+    saveButton.disabled = !pending || !!saving;
+    saveStatus.textContent = saveMessage ? t(saveMessage) : pending ? t('unsaved') : '';
+    saveStatus.classList.toggle('nb-error', ['saveConflict', 'saveFailed'].includes(saveMessage));
+  }
+
+  function refresh(anchor, selector) {
+    result = searchCells(entries.map(({ cell, source }) => ({ ...cell, source })), search.value);
+    const index = anchor ? entries.indexOf(anchor) : -1;
+    const position = result.indexOf(index);
+    if (position >= 0) cellPage = Math.floor(position / CELL_PAGE_SIZE);
+    cellPage = Math.min(cellPage, Math.max(0, Math.ceil(result.length / CELL_PAGE_SIZE) - 1));
+    draw();
+    if (anchor && selector) {
+      const target = currentDetails.get(anchor)?.querySelector(selector);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function updateSource(entry, source) {
+    if (entry.source === source) return;
+    entry.source = source;
+    if (source === textOf(entry.cell?.source)) dirtyEntries.delete(entry);
+    else dirtyEntries.add(entry);
+    if (saveMessage !== 'saveConflict') saveMessage = '';
+    syncStatus();
+    scheduleAnalysis();
+  }
+
+  function leaveEdit(discard) {
+    if (!edit || saving) return;
+    const { entry, initial } = edit;
+    if (discard) updateSource(entry, initial);
+    edit = undefined;
+    refresh(entry, '[data-action="edit"]');
+  }
+
+  function move(index, delta) {
+    if (saving) return;
+    const target = index + delta;
+    const entry = entries[index];
+    const other = entries[target];
+    if (!entry || !other) return;
+    displaced -= Number(entry.slot !== index) + Number(other.slot !== target);
+    [entries[index], entries[target]] = [other, entry];
+    displaced += Number(entry.slot !== target) + Number(other.slot !== index);
+    if (saveMessage !== 'saveConflict') saveMessage = '';
+    scheduleAnalysis();
+    refresh(entry, edit?.entry === entry ? 'textarea' : '[data-action="move"]');
+  }
+
+  async function save() {
+    if (!context.writeText) return false;
+    if (saving) return saving;
+    if (!dirty()) return true;
+    saving = Promise.resolve().then(async () => {
+      try {
+        const text = serializeDraft(notebook.raw, entries);
+        const response = await context.writeText(text);
+        if (!response?.ok) {
+          saveMessage = ['DOCUMENT_VIEW_CHANGED', 'DOCUMENT_VIEW_NOT_FOUND'].includes(response?.code) ? 'saveConflict' : 'saveFailed';
+          return false;
+        }
+        notebook = parseNotebook(text);
+        offsets = jsonPages(text);
+        entries.forEach((entry, slot) => { entry.cell = notebook.cells[slot]; entry.slot = slot; });
+        if (edit) edit.initial = edit.entry.source;
+        displaced = 0;
+        dirtyEntries.clear();
+        saveMessage = 'saved';
+        if (mode === 'json') draw();
+        return true;
+      } catch {
+        saveMessage = 'saveFailed';
+        return false;
+      }
+    }).finally(() => {
+      saving = undefined;
+      const input = content.querySelector('textarea');
+      if (input) input.readOnly = false;
+      syncStatus();
+    });
+    const input = content.querySelector('textarea');
+    if (input) input.readOnly = true;
+    saveMessage = 'saving';
+    syncStatus();
+    return saving;
+  }
+
+  function sendProjection(value) {
+    analysisWork = analysisWork.catch(() => {}).then(async () => {
+      if (!valid || projection !== value) return;
+      await context.analyze({ kind: 'update', revision: value.revision, text: value.text });
+    });
+    return analysisWork;
+  }
+
+  function scheduleAnalysis() {
+    if (!context.analyze || !isPython(notebook.language)) return;
+    clearTimeout(analysisTimer);
+    revision += 1;
+    projection = undefined;
+    if (diagnostics.size) {
+      diagnostics = new Map();
+      for (const details of currentDetails.values()) renderDiagnostics(details);
+    }
+    analysisTimer = setTimeout(() => {
+      const current = prepareProjection();
+      if (current) void sendProjection(current).catch(() => {});
+    }, 180);
+  }
+
+  function prepareProjection() {
+    if (projection) return projection;
+    const current = projectPython(entries);
+    if (current) projection = { ...current, revision };
+    return projection;
+  }
+
+  async function complete(entry, cursor, value) {
+    clearTimeout(analysisTimer);
+    const current = prepareProjection();
+    const range = current?.ranges.find((item) => item.entry === entry);
+    if (!range) return [];
+    const before = value.slice(0, cursor).split('\n');
+    const line = before.length - 1;
+    if (range.lines[line] !== range.sourceLines[line]) return [];
+    await sendProjection(current);
+    if (projection !== current) return [];
+    const items = await context.analyze({ kind: 'complete', revision: current.revision,
+      line: range.line + line, character: before.at(-1).length });
+    return projection === current ? items : [];
+  }
+
+  function renderDiagnostics(details) {
+    const list = details.querySelector('.nb-diagnostics');
+    if (!list) return;
+    const items = diagnostics.get(entries[Number(details.dataset.index)]) ?? [];
+    list.hidden = !items.length;
+    list.replaceChildren(...items.slice(0, 12).map(({ line, character, severity, message }) => {
+      const item = node('li', severity === 1 ? 'nb-error' : '', t('diagnostic', { line: line + 1, text: message }));
+      item.title = message;
+      item.dataset.column = String(character + 1);
+      return item;
+    }));
+  }
+
+  context.onSave?.(save);
+  context.onDiagnostics?.((version, items) => {
+    if (!projection || version !== projection.revision || !Array.isArray(items)) return;
+    diagnostics = mapDiagnostics(projection, items);
+    for (const details of currentDetails.values()) renderDiagnostics(details);
+  });
+  view.addEventListener('keydown', (event) => {
+    if (context.writeText && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      void save();
+    }
   });
 
   function status(key, detail) {
@@ -176,12 +364,14 @@ export async function activate(context) {
   }
 
   function renderCell(index, source, kind) {
-    const cell = notebook.cells[index];
+    const entry = entries[index];
+    const cell = entry.cell;
     const foldedByMetadata = cell?.metadata?.jupyter?.source_hidden === true;
     const details = node('details', 'nb-cell');
     details.id = 'cell-' + (index + 1);
     details.dataset.kind = kind;
-    details.open = openOverrides.get(index) ?? (!foldedByMetadata || search.value.trim() !== '');
+    details.dataset.index = String(index);
+    details.open = openOverrides.get(entry) ?? (!foldedByMetadata || search.value.trim() !== '');
     let lastOpen = details.open;
     const summary = node('summary');
     const ordinal = node('span', 'nb-ordinal', String(index + 1).padStart(2, '0'));
@@ -192,15 +382,55 @@ export async function activate(context) {
     if (kind === 'code' && Number.isSafeInteger(execution)) {
       summary.append(node('span', 'nb-execution', '[' + execution + ']'));
     }
+    if (context.writeText) {
+      const actions = node('span', 'nb-cell-actions');
+      const action = (key, glyph, perform) => button(key, glyph, (event) => {
+        event.preventDefault();
+        if (!saving) perform();
+      }, false, false);
+      if (edit?.entry === entry) {
+        actions.append(action('applyEdit', Check, () => leaveEdit(false)), action('cancelEdit', X, () => leaveEdit(true)));
+      } else if (cell && typeof cell === 'object' && !Array.isArray(cell)) {
+        const pencil = action('editCell', Pencil, () => {
+          edit = { entry, initial: entry.source };
+          openOverrides.set(entry, true);
+          scheduleAnalysis();
+          refresh(entry, 'textarea');
+        });
+        pencil.dataset.action = 'edit';
+        actions.append(pencil);
+      }
+      const up = action('moveUp', ArrowUp, () => move(index, -1));
+      const down = action('moveDown', ArrowDown, () => move(index, 1));
+      up.dataset.action = down.dataset.action = 'move';
+      up.disabled = index === 0;
+      down.disabled = index + 1 === entries.length;
+      actions.append(up, down);
+      summary.append(actions);
+    }
     details.append(summary);
-    currentDetails.set(index, details);
+    currentDetails.set(entry, details);
     let built = false;
     function materialize() {
       if (!details.open || built) return;
       built = true;
       const body = node('div', 'nb-cell-body');
-      if (kind === 'markdown') appendMarkdown(body, source, cell?.attachments);
+      if (edit?.entry === entry) {
+        const editor = createCellEditor({ entry, edit, t,
+          onChange: (text) => updateSource(entry, text),
+          complete: kind === 'code' && context.analyze && isPython(notebook.language) ? (cursor, text) => complete(entry, cursor, text) : null,
+          finish: () => leaveEdit(false) });
+        editor.querySelector('textarea').readOnly = !!saving;
+        body.append(editor);
+      } else if (kind === 'markdown') appendMarkdown(body, source, cell?.attachments);
+      else if (kind === 'code') {
+        const pre = node('pre', 'nb-code');
+        highlightCode(pre, source.slice(0, MAX_RICH_TEXT), notebook.language);
+        body.append(pre);
+        if (source.length > MAX_RICH_TEXT) body.append(status('truncated'));
+      }
       else appendText(body, source);
+      if (kind === 'code' && context.analyze) body.append(node('ul', 'nb-diagnostics'));
       if (Array.isArray(cell?.outputs) && cell.outputs.length) {
         const outputs = node('details', 'nb-outputs');
         outputs.open = cell.metadata?.collapsed !== true && cell.metadata?.jupyter?.outputs_hidden !== true;
@@ -217,10 +447,11 @@ export async function activate(context) {
         body.append(outputs);
       }
       details.append(body);
+      renderDiagnostics(details);
     }
     details.addEventListener('toggle', () => {
       if (!details.isConnected) return;
-      if (lastOpen !== details.open) openOverrides.set(index, details.open);
+      if (lastOpen !== details.open) openOverrides.set(entry, details.open);
       lastOpen = details.open;
       materialize();
     });
@@ -232,6 +463,7 @@ export async function activate(context) {
     currentDetails.clear();
     content.scrollTop = 0;
     for (const update of labels) update();
+    syncStatus();
     search.placeholder = t('search');
     search.setAttribute('aria-label', t('search'));
     previewButton.setAttribute('aria-pressed', String(mode === 'preview'));
@@ -246,7 +478,7 @@ export async function activate(context) {
     next.disabled = current + 1 >= pages;
     pager.hidden = pages === 1;
     pageLabel.textContent = t('page', { page: current + 1, pages });
-    counter.textContent = showCells ? t('count', { count: result.length, total: notebook.cells.length }) : '';
+    counter.textContent = showCells ? t('count', { count: result.length, total: entries.length }) : '';
 
     if (!notebook || (mode === 'preview' && notebook.error)) {
       content.replaceChildren(status(notebook?.error || 'loading'));
@@ -269,9 +501,10 @@ export async function activate(context) {
     outline.append(node('h2', '', t('outline')));
     const list = node('div', 'nb-cells');
     for (const index of result.slice(cellPage * CELL_PAGE_SIZE, (cellPage + 1) * CELL_PAGE_SIZE)) {
-      const cell = notebook.cells[index];
+      const entry = entries[index];
+      const cell = entry.cell;
       const kind = cell?.cell_type === 'code' || cell?.cell_type === 'markdown' ? cell.cell_type : 'raw';
-      const source = textOf(cell?.source);
+      const source = entry.source;
       const details = renderCell(index, source, kind);
       list.append(details);
       const excerpt = source.slice(0, 180).trim().replace(/^#{1,6}\s+/, '').split('\n')[0] || t(kind);
@@ -298,13 +531,15 @@ export async function activate(context) {
   if (!notebook) {
     try { notebook = parseNotebook(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await context.readAll(MAX_BYTES))); }
     catch (error) { notebook = { error: error instanceof TypeError ? 'invalidEncoding' : 'readFailed' }; }
-    if (notebook.cells) result = searchCells(notebook.cells, '');
+    if (notebook.cells) entries = draftCells(notebook);
     if (notebook.raw !== undefined) offsets = jsonPages(notebook.raw);
-    draw();
+    refresh();
   }
   const subscription = i18n.onDidChange(draw);
   return () => {
     clearTimeout(searchTimer);
+    clearTimeout(analysisTimer);
+    valid = false;
     subscription.dispose();
     styling.remove();
     root.replaceChildren();
