@@ -1,5 +1,5 @@
-import { ArrowDown, ArrowUp, Braces, Check, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Eye,
-  Pencil, Save, Search, X, createElement } from 'lucide';
+import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Eraser,
+  Pencil, Save, Search, Trash2, Undo2, X, createElement } from 'lucide';
 import { CELL_PAGE_SIZE, embeddedImage, imageMimes, jsonPages, MAX_BYTES, MAX_OUTPUTS, MAX_RICH_TEXT,
   parseNotebook, plainOutput, searchCells, stripAnsi, textOf } from './notebook-model.js';
 import { markdownMarkup, mathMarkup, staticOutput } from './rich-content.js';
@@ -35,7 +35,6 @@ export async function activate(context) {
   const toolbar = node('div', 'nb-toolbar');
   const saveStatus = node('span', 'nb-save-status');
   saveStatus.setAttribute('role', 'status');
-  const modes = node('div', 'nb-modes');
   const searchBox = node('label', 'nb-search');
   const search = node('input');
   search.type = 'search';
@@ -69,21 +68,18 @@ export async function activate(context) {
   let valid = true;
   let diagnostics = new Map();
   const dirtyEntries = new Set();
-  let displaced = 0;
+  let undo;
   const openOverrides = new Map();
   const currentDetails = new Map();
   const labels = [];
 
-  function button(key, glyph, action, showLabel = false, persistent = true) {
-    const control = node('button', showLabel ? 'nb-mode' : 'nb-icon-button');
+  function button(key, glyph, action, persistent = true) {
+    const control = node('button', 'nb-icon-button');
     control.type = 'button';
     control.append(icon(glyph));
-    const label = node('span');
-    if (showLabel) control.append(label);
     const localize = () => {
       control.title = t(key);
       control.setAttribute('aria-label', t(key));
-      label.textContent = t(key);
     };
     localize();
     if (persistent) labels.push(localize);
@@ -92,13 +88,10 @@ export async function activate(context) {
   }
 
   function setMode(next) {
-    if (mode === next) return;
+    if (mode === next || (next === 'json' && notebook?.raw === undefined)) return;
     mode = next;
     draw();
   }
-  const previewButton = button('preview', Eye, () => setMode('preview'), true);
-  const rawButton = button('json', Braces, () => setMode('json'), true);
-  modes.append(previewButton, rawButton);
   const collapse = button('collapse', ChevronsUp, () => setPageOpen(false));
   const expand = button('expand', ChevronsDown, () => setPageOpen(true));
   function shiftPage(offset) {
@@ -110,11 +103,12 @@ export async function activate(context) {
   const previous = button('previous', ChevronLeft, () => shiftPage(-1));
   const next = button('next', ChevronRight, () => shiftPage(1));
   const saveButton = button('save', Save, () => void save());
+  const undoButton = button('undoCellAction', Undo2, undoAction);
   saveButton.hidden = !context.writeText;
   identity.append(saveStatus);
   pager.append(previous, pageLabel, next);
-  utilities.append(collapse, expand, saveButton, counter, pager);
-  toolbar.append(modes, searchBox, utilities);
+  utilities.append(collapse, expand, undoButton, saveButton, counter, pager);
+  toolbar.append(searchBox, utilities);
   search.addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
@@ -123,19 +117,26 @@ export async function activate(context) {
     }, 90);
   });
 
-  function dirty() { return displaced > 0 || dirtyEntries.size > 0; }
+  function dirty() {
+    return !!notebook?.cells && (entries.length !== notebook.cells.length ||
+      dirtyEntries.size > 0 || entries.some((entry, index) => entry.slot !== index));
+  }
 
   function syncStatus() {
     const pending = dirty();
     context.setDirty?.(pending);
     view.dataset.dirty = String(pending);
     saveButton.disabled = !pending || !!saving;
+    undoButton.hidden = !undo;
+    undoButton.disabled = !!saving;
     saveStatus.textContent = saveMessage ? t(saveMessage) : pending ? t('unsaved') : '';
     saveStatus.classList.toggle('nb-error', ['saveConflict', 'saveFailed'].includes(saveMessage));
   }
 
   function refresh(anchor, selector) {
-    result = searchCells(entries.map(({ cell, source }) => ({ ...cell, source })), search.value);
+    result = searchCells(entries.map(({ cell, source, clearOutputs }) => ({
+      ...cell, source, outputs: clearOutputs ? [] : cell?.outputs
+    })), search.value);
     const index = anchor ? entries.indexOf(anchor) : -1;
     const position = result.indexOf(index);
     if (position >= 0) cellPage = Math.floor(position / CELL_PAGE_SIZE);
@@ -148,11 +149,15 @@ export async function activate(context) {
     }
   }
 
+  function markEntry(entry) {
+    if (entry.clearOutputs || entry.source !== textOf(entry.cell?.source)) dirtyEntries.add(entry);
+    else dirtyEntries.delete(entry);
+  }
+
   function updateSource(entry, source) {
     if (entry.source === source) return;
     entry.source = source;
-    if (source === textOf(entry.cell?.source)) dirtyEntries.delete(entry);
-    else dirtyEntries.add(entry);
+    markEntry(entry);
     if (saveMessage !== 'saveConflict') saveMessage = '';
     syncStatus();
     scheduleAnalysis();
@@ -166,18 +171,62 @@ export async function activate(context) {
     refresh(entry, '[data-action="edit"]');
   }
 
+  function toggleEdit(entry) {
+    if (saving || !entry.cell || typeof entry.cell !== 'object' || Array.isArray(entry.cell)) return;
+    if (edit?.entry === entry) {
+      leaveEdit(false);
+      return;
+    }
+    edit = { entry, initial: entry.source };
+    openOverrides.set(entry, true);
+    scheduleAnalysis();
+    refresh(entry, 'textarea');
+  }
+
   function move(index, delta) {
     if (saving) return;
     const target = index + delta;
     const entry = entries[index];
     const other = entries[target];
     if (!entry || !other) return;
-    displaced -= Number(entry.slot !== index) + Number(other.slot !== target);
     [entries[index], entries[target]] = [other, entry];
-    displaced += Number(entry.slot !== target) + Number(other.slot !== index);
     if (saveMessage !== 'saveConflict') saveMessage = '';
     scheduleAnalysis();
     refresh(entry, edit?.entry === entry ? 'textarea' : '[data-action="move"]');
+  }
+
+  function deleteCell(entry) {
+    const index = entries.indexOf(entry);
+    const next = entries[index + 1];
+    entries.splice(index, 1);
+    if (edit?.entry === entry) edit = undefined;
+    dirtyEntries.delete(entry);
+    undo = { type: 'delete', entry, index, next };
+    if (saveMessage !== 'saveConflict') saveMessage = '';
+    scheduleAnalysis();
+    refresh(next ?? entries[index - 1], 'summary');
+    if (!entries.length) undoButton.focus();
+  }
+
+  function clearOutput(entry) {
+    entry.clearOutputs = true;
+    markEntry(entry);
+    undo = { type: 'clear', entry };
+    if (saveMessage !== 'saveConflict') saveMessage = '';
+    refresh(entry, edit?.entry === entry ? 'textarea' : 'summary');
+  }
+
+  function undoAction() {
+    if (saving || !undo) return;
+    const { type, entry, index, next } = undo;
+    undo = undefined;
+    if (type === 'delete') {
+      const before = entries.indexOf(next);
+      entries.splice(before >= 0 ? before : Math.min(index, entries.length), 0, entry);
+      scheduleAnalysis();
+    } else entry.clearOutputs = false;
+    markEntry(entry);
+    refresh(entry, edit?.entry === entry ? 'textarea' : 'summary');
   }
 
   async function save() {
@@ -194,9 +243,9 @@ export async function activate(context) {
         }
         notebook = parseNotebook(text);
         offsets = jsonPages(text);
-        entries.forEach((entry, slot) => { entry.cell = notebook.cells[slot]; entry.slot = slot; });
+        entries.forEach((entry, slot) => { entry.cell = notebook.cells[slot]; entry.slot = slot; entry.clearOutputs = false; });
         if (edit) edit.initial = edit.entry.source;
-        displaced = 0;
+        undo = undefined;
         dirtyEntries.clear();
         saveMessage = 'saved';
         if (mode === 'json') draw();
@@ -378,7 +427,7 @@ export async function activate(context) {
     const title = node('span', 'nb-kind', t(kind));
     summary.append(ordinal, title);
     if (kind === 'code' && notebook.language) summary.append(node('span', 'nb-cell-meta', notebook.language));
-    const execution = cell?.execution_count;
+    const execution = entry.clearOutputs ? null : cell?.execution_count;
     if (kind === 'code' && Number.isSafeInteger(execution)) {
       summary.append(node('span', 'nb-execution', '[' + execution + ']'));
     }
@@ -387,16 +436,11 @@ export async function activate(context) {
       const action = (key, glyph, perform) => button(key, glyph, (event) => {
         event.preventDefault();
         if (!saving) perform();
-      }, false, false);
+      }, false);
       if (edit?.entry === entry) {
         actions.append(action('applyEdit', Check, () => leaveEdit(false)), action('cancelEdit', X, () => leaveEdit(true)));
       } else if (cell && typeof cell === 'object' && !Array.isArray(cell)) {
-        const pencil = action('editCell', Pencil, () => {
-          edit = { entry, initial: entry.source };
-          openOverrides.set(entry, true);
-          scheduleAnalysis();
-          refresh(entry, 'textarea');
-        });
+        const pencil = action('editCell', Pencil, () => toggleEdit(entry));
         pencil.dataset.action = 'edit';
         actions.append(pencil);
       }
@@ -406,7 +450,20 @@ export async function activate(context) {
       up.disabled = index === 0;
       down.disabled = index + 1 === entries.length;
       actions.append(up, down);
+      if (kind === 'code') {
+        const clear = action('clearOutput', Eraser, () => clearOutput(entry));
+        clear.disabled = entry.clearOutputs || (!cell?.outputs?.length && execution == null);
+        actions.append(clear);
+      }
+      const remove = action('deleteCell', Trash2, () => deleteCell(entry));
+      remove.classList.add('nb-delete');
+      actions.append(remove);
       summary.append(actions);
+      details.addEventListener('dblclick', (event) => {
+        if (event.target.closest('button, .nb-outputs, .nb-diagnostics') || saving) return;
+        event.preventDefault();
+        toggleEdit(entry);
+      });
     }
     details.append(summary);
     currentDetails.set(entry, details);
@@ -431,7 +488,7 @@ export async function activate(context) {
       }
       else appendText(body, source);
       if (kind === 'code' && context.analyze) body.append(node('ul', 'nb-diagnostics'));
-      if (Array.isArray(cell?.outputs) && cell.outputs.length) {
+      if (!entry.clearOutputs && Array.isArray(cell?.outputs) && cell.outputs.length) {
         const outputs = node('details', 'nb-outputs');
         outputs.open = cell.metadata?.collapsed !== true && cell.metadata?.jupyter?.outputs_hidden !== true;
         outputs.append(node('summary', '', t('outputs', { count: cell.outputs.length })));
@@ -459,6 +516,40 @@ export async function activate(context) {
     return details;
   }
 
+  function kindOf(entry) {
+    const kind = entry.cell?.cell_type;
+    return kind === 'code' || kind === 'markdown' ? kind : 'raw';
+  }
+
+  function publishNavigation(visible) {
+    context.setNavigation?.({
+      providerId: 'bobocloud.notebook-preview.sidebar',
+      activeMode: mode,
+      modes: [{ id: 'preview', label: t('preview') },
+        ...(notebook?.raw === undefined ? [] : [{ id: 'json', label: t('json') }])],
+      outlineLabel: t('outline'),
+      rows: visible.map((index) => {
+        const entry = entries[index];
+        const kind = kindOf(entry);
+        const label = entry.source.slice(0, 180).trim().replace(/^#{1,6}\s+/, '').split('\n')[0] || t(kind);
+        return { id: entry.id, label, number: index + 1, tone: kind === 'code' ? 'amber' : kind === 'markdown' ? 'teal' : 'neutral' };
+      })
+    });
+  }
+
+  context.onNavigate?.((id) => {
+    if (id === 'preview' || id === 'json') {
+      setMode(id);
+      return;
+    }
+    const entry = entries.find((item) => item.id === id);
+    const details = currentDetails.get(entry);
+    if (!details) return;
+    details.open = true;
+    details.querySelector('summary').focus({ preventScroll: true });
+    details.scrollIntoView({ block: 'start' });
+  });
+
   function draw() {
     currentDetails.clear();
     content.scrollTop = 0;
@@ -466,9 +557,9 @@ export async function activate(context) {
     syncStatus();
     search.placeholder = t('search');
     search.setAttribute('aria-label', t('search'));
-    previewButton.setAttribute('aria-pressed', String(mode === 'preview'));
-    rawButton.setAttribute('aria-pressed', String(mode === 'json'));
     const showCells = mode === 'preview' && notebook?.cells;
+    const visible = showCells ? result.slice(cellPage * CELL_PAGE_SIZE, (cellPage + 1) * CELL_PAGE_SIZE) : [];
+    publishNavigation(visible);
     const pages = Math.max(1, mode === 'json' ? offsets.length - 1 : Math.ceil(result.length / CELL_PAGE_SIZE));
     const current = mode === 'json' ? rawPage : cellPage;
     toolbar.hidden = notebook?.raw === undefined;
@@ -492,38 +583,15 @@ export async function activate(context) {
       return;
     }
     if (!result.length) {
-      content.replaceChildren(status(notebook.cells.length ? 'noMatches' : 'empty'));
+      content.replaceChildren(status(entries.length ? 'noMatches' : 'empty'));
       return;
     }
-    const spread = node('div', 'nb-spread');
-    const outline = node('nav', 'nb-outline');
-    outline.setAttribute('aria-label', t('outline'));
-    outline.append(node('h2', '', t('outline')));
     const list = node('div', 'nb-cells');
-    for (const index of result.slice(cellPage * CELL_PAGE_SIZE, (cellPage + 1) * CELL_PAGE_SIZE)) {
+    for (const index of visible) {
       const entry = entries[index];
-      const cell = entry.cell;
-      const kind = cell?.cell_type === 'code' || cell?.cell_type === 'markdown' ? cell.cell_type : 'raw';
-      const source = entry.source;
-      const details = renderCell(index, source, kind);
-      list.append(details);
-      const excerpt = source.slice(0, 180).trim().replace(/^#{1,6}\s+/, '').split('\n')[0] || t(kind);
-      const jump = node('button', 'nb-jump');
-      jump.dataset.kind = kind;
-      jump.type = 'button';
-      const marker = node('span', 'nb-kind-marker');
-      marker.setAttribute('aria-hidden', 'true');
-      jump.append(marker, node('span', 'nb-ordinal', String(index + 1)), node('span', 'nb-excerpt', excerpt));
-      jump.title = excerpt;
-      jump.addEventListener('click', () => {
-        details.open = true;
-        details.querySelector('summary').focus({ preventScroll: true });
-        details.scrollIntoView({ block: 'start' });
-      });
-      outline.append(jump);
+      list.append(renderCell(index, entry.source, kindOf(entry)));
     }
-    spread.append(outline, list);
-    content.replaceChildren(spread);
+    content.replaceChildren(list);
   }
 
   if (context.document.size > MAX_BYTES) notebook = { error: 'tooLarge' };

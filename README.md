@@ -1,11 +1,12 @@
 # BOBOCloud Notebook Preview
 
-Install **Notebook Preview** in Extensions → Marketplace, enable it, then open an `.ipynb` file in the workspace. Version 1.1 needs BOBOCloud 2.8.1 with Plugin API 1.8 or later. You can also import the package from [Releases](https://github.com/NemophilistJohn/BOBOCloud-Jupter-support/releases); older hosts can use version 1.0.2.
+Install **Notebook Preview** in Extensions → Marketplace, enable it, then open an `.ipynb` file in the workspace. Version 1.2 needs BOBOCloud 2.8.1 with Plugin API 1.9 or later. You can also import the package from [Releases](https://github.com/NemophilistJohn/BOBOCloud-Jupter-support/releases); API 1.8 hosts can use version 1.1.0.
 
 - Preview format 4 notebook code with offline syntax highlighting, Markdown, TeX math, saved text and tracebacks, raster images, and static tables.
 - Jump to a cell from the outline, collapse cells and outputs, or filter by source and saved text. The toolbar expands or collapses the current page.
-- Use the cell toolbar to edit or move one cell at a time. Save with the toolbar or Ctrl/Cmd+S. The host checks for external changes before writing. A conflict leaves the draft open.
-- **Original JSON** shows the last loaded or saved version, including unknown metadata and outputs. Saving changes only cell source and order. Large files are shown in pages.
+- Double-click a cell to edit it, and double-click again to return to the preview. The cell toolbar also supports moving and deleting cells and clearing saved code output. Undo the last deletion or clear before saving.
+- Save with the toolbar or Ctrl/Cmd+S. The host checks for external changes before writing. A conflict leaves the draft open.
+- Switch to **Original JSON** or jump to a cell from the Notebook sidebar. Original JSON displays the last loaded or saved version. Large files are shown in pages.
 - Python completion (Ctrl+Space or after a dot) and diagnostics use the configured remote analyzer when enabled. The editor analyzes code cells together in notebook order. IPython magic and shell escapes are skipped.
 - The plugin does not execute code, load external preview resources, or render widgets, scripts, or SVG.
 

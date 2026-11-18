@@ -1,4 +1,7 @@
 {
+  "deleteCell": "セルを削除",
+  "clearOutput": "出力を消去",
+  "undoCellAction": "直前の削除または消去を取り消す",
   "save": "ノートブックを保存",
   "editCell": "セルを編集",
   "applyEdit": "編集を確定",

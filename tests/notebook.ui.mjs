@@ -121,7 +121,12 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
     return frame.contentFrame();
   }
   const view = await open('analysis.ipynb');
+  const navigation = page.locator('.source-control-sidebar .document-navigation');
+  const modeButton = (name) => navigation.getByRole('button', { name, exact: true });
   await expect(view.getByRole('heading', { name: 'Regression notes' })).toBeVisible();
+  await expect(modeButton('Notebook preview')).toHaveAttribute('aria-pressed', 'true');
+  await expect(view.getByRole('button', { name: 'Original JSON' })).toHaveCount(0);
+  await expect(navigation.locator('.document-navigation-row').first()).toHaveAttribute('data-tone', 'teal');
   assert.deepEqual(await view.locator('body').evaluate(() => [typeof window.api, typeof window.BOBO, location.origin]), ['undefined', 'undefined', 'null']);
   await expect(view.locator('math')).toHaveCount(3);
   await expect(view.locator('mfrac')).toHaveCount(1);
@@ -142,7 +147,7 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
 
   await view.getByRole('button', { name: 'Collapse cells on this page' }).click();
   await expect(view.locator('.nb-cell[open]')).toHaveCount(0);
-  await view.getByRole('button', { name: '01 Regression notes' }).or(view.getByRole('button', { name: '1 Regression notes' })).click();
+  await modeButton('1 Regression notes').click();
   await expect(view.locator('.nb-cell[open]')).toHaveCount(1);
   await view.getByRole('button', { name: 'Expand cells on this page' }).click();
   await expect(view.locator('.nb-cell[open]')).toHaveCount(24);
@@ -155,26 +160,62 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   await search.fill('');
   await expect(view.locator('.nb-cell')).toHaveCount(24);
 
-  await view.getByRole('button', { name: 'Original JSON' }).click();
+  await modeButton('Original JSON').click();
   assert.equal(await view.locator('.nb-json').textContent(), raw);
-  await view.getByRole('button', { name: 'Notebook preview' }).click();
+  await modeButton('Notebook preview').click();
   await expect(view.getByRole('heading', { name: 'Regression notes' })).toBeVisible();
   await page.screenshot({ path: path.join(root, 'test-results', 'notebook-preview.png') });
 
   await page.evaluate(() => window.BOBO.i18n.setLocale('zh-CN'));
-  await expect(view.getByRole('button', { name: '原始 JSON' })).toBeVisible();
+  await expect(modeButton('原始 JSON')).toBeVisible();
+  await expect(view.locator('#cell-2').getByRole('button', { name: '清除输出' })).toBeVisible();
   await expect(panel).not.toContainText('只读');
   await page.evaluate(() => window.BOBO.i18n.setLocale('ja'));
-  await expect(view.getByRole('button', { name: '元の JSON' })).toBeVisible();
+  await expect(modeButton('元の JSON')).toBeVisible();
+  await expect(view.locator('#cell-2').getByRole('button', { name: 'セルを削除' })).toBeVisible();
   await expect(panel).not.toContainText('読み取り専用');
   await page.evaluate(() => window.BOBO.i18n.setLocale('en'));
 
   const invalid = await open('broken.ipynb');
   await expect(invalid.getByText('This file is not valid JSON.')).toBeVisible();
-  await invalid.getByRole('button', { name: 'Original JSON' }).click();
+  await modeButton('Original JSON').click();
   assert.equal(await invalid.locator('.nb-json').textContent(), broken);
   const empty = await open('empty.ipynb');
   await expect(empty.getByText('This notebook has no cells.')).toBeVisible();
+
+  const actionsPath = path.join(workspace, 'actions.ipynb');
+  await writeFile(actionsPath, raw);
+  const actions = await open('actions.ipynb');
+  const code = actions.locator('#cell-2');
+  await code.locator('.nb-code').dblclick();
+  const editField = code.getByRole('textbox', { name: 'Cell source' });
+  await editField.fill('print("draft")');
+  await editField.dblclick();
+  await expect(code.locator('.nb-code')).toHaveText('print("draft")');
+  await expect(editField).toHaveCount(0);
+  assert.equal(await readFile(actionsPath, 'utf8'), raw);
+  await expect(actions.locator('#cell-1').getByRole('button', { name: 'Clear output' })).toHaveCount(0);
+  await code.getByRole('button', { name: 'Clear output' }).click();
+  await expect(code.locator('.nb-outputs')).toHaveCount(0);
+  await expect(code.locator('.nb-execution')).toHaveCount(0);
+  const undo = actions.getByRole('button', { name: 'Undo last delete or clear' });
+  await undo.click();
+  await expect(code.locator('.nb-outputs')).toBeVisible();
+  await code.getByRole('button', { name: 'Clear output' }).click();
+  await actions.locator('#cell-1').getByRole('button', { name: 'Delete cell' }).click();
+  await expect(modeButton('1 print("draft")')).toBeVisible();
+  await undo.click();
+  await expect(modeButton('1 Regression notes')).toBeVisible();
+  await actions.locator('#cell-1').getByRole('button', { name: 'Delete cell' }).click();
+  await actions.getByRole('button', { name: 'Save notebook' }).click();
+  await expect(actions.getByText('Saved', { exact: true })).toBeVisible();
+  const actionsSaved = JSON.parse(await readFile(actionsPath, 'utf8'));
+  assert.equal(actionsSaved.cells.length, 26);
+  assert.deepEqual(actionsSaved.cells[0], {
+    cell_type: 'code', source: ['print("draft")'], execution_count: null,
+    metadata: { unfamiliar: { option: 1 } }, outputs: []
+  });
+  await page.screenshot({ path: path.join(root, 'test-results', 'notebook-navigation.png') });
 
   const editor = await open('editable.ipynb');
   await expect(editor.locator('.hljs-keyword').first()).toHaveText('import');
@@ -257,6 +298,15 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   assert.equal(await readFile(editable, 'utf8'), written + '\n');
   await expect(field).toHaveValue('m.sin');
   await page.screenshot({ path: path.join(root, 'test-results', 'notebook-edit.png') });
+
+  const regular = path.join(workspace, 'regular.py');
+  await writeFile(regular, 'print("regular file")\n');
+  await page.evaluate((file) => window.BOBO.workspace.openFile(file, 'regular.py'), regular);
+  await expect(navigation).toBeHidden();
+  await expect(panel).toContainText('.ipynb');
+  await open('editable.ipynb');
+  await expect(modeButton('Notebook preview')).toBeVisible();
+  await expect(navigation.locator('.document-navigation-row')).toHaveCount(2);
 
   await page.evaluate((pluginId) => window.api.plugins.disable(pluginId), id);
   await expect(activity).toHaveCount(0);

@@ -1,4 +1,7 @@
 {
+  "deleteCell": "Delete cell",
+  "clearOutput": "Clear output",
+  "undoCellAction": "Undo last delete or clear",
   "save": "Save notebook",
   "editCell": "Edit cell",
   "applyEdit": "Apply edit",

@@ -6,7 +6,7 @@ export const MAX_PROJECTION = 256 * 1024;
 const sourceLineEndings = (source) => source.replace(/\r\n?/g, '\n');
 
 export function draftCells(notebook) {
-  return notebook.cells.map((cell, slot) => ({ slot, cell, source: textOf(cell?.source) }));
+  return notebook.cells.map((cell, slot) => ({ id: 'cell:' + slot, slot, cell, source: textOf(cell?.source), clearOutputs: false }));
 }
 
 export function serializeDraft(raw, entries) {
@@ -14,32 +14,44 @@ export function serializeDraft(raw, entries) {
   const json = raw.slice(bom.length);
   const tree = parseTree(json);
   const arrays = tree?.children?.filter((child) => child.children?.[0]?.value === 'cells');
-  const slots = arrays?.length === 1 && arrays[0].children[1].children;
-  if (!slots || slots.length !== entries.length) throw new Error('Ambiguous notebook cells');
-  let end = 0;
-  const pieces = [bom];
+  const array = arrays?.length === 1 && arrays[0].children[1];
+  if (array?.type !== 'array') throw new Error('Ambiguous notebook cells');
+  const slots = array.children ?? [];
+  if (entries.length > slots.length) throw new Error('Missing source cells');
+  if (!slots.length) return raw;
+  const pieces = [bom, json.slice(0, slots[0].offset)];
   for (const [index, entry] of entries.entries()) {
-    const target = slots[index];
     const original = slots[entry.slot];
-    pieces.push(json.slice(end, target.offset));
+    if (!original) throw new Error('Missing source cell');
+    if (index > 0) {
+      const previous = slots[index - 1];
+      pieces.push(json.slice(previous.offset + previous.length, slots[index].offset));
+    }
     let cell = json.slice(original.offset, original.offset + original.length);
+    const patches = [];
+    const missing = [];
+    const replaceField = (name, value) => {
+      const fields = original.children?.filter((child) => child.children?.[0]?.value === name) ?? [];
+      if (fields.length > 1) throw new Error('Ambiguous notebook field: ' + name);
+      const field = fields[0]?.children[1];
+      if (field) patches.push({ offset: field.offset - original.offset, length: field.length, content: JSON.stringify(value) });
+      else missing.push([name, value]);
+    };
     if (entry.source !== textOf(entry.cell?.source)) {
-      const fields = original.children?.filter((child) => child.children?.[0]?.value === 'source');
-      if (fields?.length > 1) throw new Error('Ambiguous notebook source');
       const source = Array.isArray(entry.cell?.source)
         ? entry.source.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [] : entry.source;
-      const field = fields?.[0]?.children[1];
-      if (field) {
-        const offset = field.offset - original.offset;
-        cell = cell.slice(0, offset) + JSON.stringify(source) + cell.slice(offset + field.length);
-      } else {
-        cell = applyEdits(cell, modify(cell, ['source'], source, {}));
-      }
+      replaceField('source', source);
     }
+    if (entry.clearOutputs) {
+      replaceField('outputs', []);
+      replaceField('execution_count', null);
+    }
+    cell = applyEdits(cell, patches);
+    for (const [name, value] of missing) cell = applyEdits(cell, modify(cell, [name], value, {}));
     pieces.push(cell);
-    end = target.offset + target.length;
   }
-  pieces.push(json.slice(end));
+  const last = slots.at(-1);
+  pieces.push(json.slice(last.offset + last.length));
   return pieces.join('');
 }
 

@@ -37,6 +37,22 @@ test('projects imports before later uses and remaps diagnostics after reorder by
   assert.equal(reordered.ranges.at(-1).entry, first);
 });
 
+test('removes selected cells and clears saved output without reserializing surviving fields', () => {
+  const raw = '{"nbformat":4, "cells":[ \n' +
+    '{"source":"deleted"},\n' +
+    '{"cell_type":"code", "source":"keep", "metadata":{"large":9007199254740995}, "outputs":[{"custom":42}], "execution_count":8},\n' +
+    '{"source":"also deleted"}\n ], "extra":1e+03}';
+  const [, cell] = draftCells(parseNotebook(raw));
+  cell.source = 'updated';
+  cell.clearOutputs = true;
+  const saved = serializeDraft(raw, [cell]);
+  assert.match(saved, /"large":9007199254740995/);
+  assert.match(saved, /"extra":1e\+03/);
+  assert.deepEqual(parseNotebook(saved).cells, [{ cell_type: 'code', source: 'updated',
+    metadata: { large: 9007199254740996 }, outputs: [], execution_count: null }]);
+  assert.deepEqual(parseNotebook(serializeDraft(saved, [])).cells, []);
+});
+
 test('retains unfamiliar data and the raw text, including invalid JSON', () => {
   const raw = '\uFEFF{\r\n  "nbformat": 4, "cells": [{"metadata":{"extra":{"word":"\u96EA"}}}], "vendor":{"big":9007199254740995}\r\n}\r\n';
   const model = parseNotebook(raw);

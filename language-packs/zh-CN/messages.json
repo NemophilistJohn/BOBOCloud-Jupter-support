@@ -1,4 +1,7 @@
 {
+  "deleteCell": "删除单元格",
+  "clearOutput": "清除输出",
+  "undoCellAction": "撤销上次删除或清除",
   "save": "保存笔记本",
   "editCell": "编辑单元格",
   "applyEdit": "确认编辑",
