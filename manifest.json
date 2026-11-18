@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "id": "bobocloud.notebook-preview",
+  "displayName": "Notebook Preview",
+  "description": "Read-only Jupyter Notebook preview with Markdown, math, and saved outputs.",
+  "version": "1.0.0",
+  "engines": { "bobocloud": ">=2.8.1 <2.9.0", "pluginApi": "^1.6.0" },
+  "main": "dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "permissions": ["documentViews.register", "documents.read", "sourceControl.register"],
+  "contributes": {
+    "documentViewers": [{
+      "id": "bobocloud.notebook-preview.jupyter",
+      "extensions": [".ipynb"],
+      "entry": "dist/notebook.js",
+      "resources": ["dist/view.css"],
+      "priority": 200
+    }]
+  },
+  "localization": {
+    "default": "language-packs/en/messages.json",
+    "en": "language-packs/en/messages.json",
+    "zh-CN": "language-packs/zh-CN/messages.json",
+    "ja": "language-packs/ja/messages.json"
+  }
+}

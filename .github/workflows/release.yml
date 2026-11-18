@@ -1,0 +1,68 @@
+name: Verify and release Notebook Preview
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: NemophilistJohn/BOBOcloud-A-cloud-based-remote-compilation-platform
+          ref: bb472ea459ede2e9eebc84b100f4777b368587e3
+          path: host
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            host/client/package-lock.json
+      - run: npm ci
+      - run: npm run release:check
+      - run: npm test
+      - run: npm ci --prefix host/client
+      - run: npm --prefix host/client run prepare:rclone --if-present
+      - run: npm --prefix host/client run build:renderer:dev
+      - name: Download the matching general preview fixture
+        run: |
+          curl --fail --silent --show-error --retry 3 \
+            https://raw.githubusercontent.com/NemophilistJohn/bobocloud-document-preview/v1.1.1/artifacts/bobocloud.document-preview-1.1.1.boboplugin \
+            -o "$RUNNER_TEMP/general-preview.boboplugin"
+          printf '%s  %s\n' bbdd2b24a98ee75a8721f070b525bf93e8ec7370c7267139539a1d979e00df64 \
+            "$RUNNER_TEMP/general-preview.boboplugin" | sha256sum --check
+      - run: xvfb-run -a npm run test:ui
+        env:
+          BOBOCLOUD_HOST_CLIENT: ${{ github.workspace }}/host/client
+          BOBOCLOUD_GENERAL_PREVIEW_ARTIFACT: ${{ runner.temp }}/general-preview.boboplugin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: notebook-ui-evidence
+          path: test-results/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish verified archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          archive="artifacts/bobocloud.notebook-preview-$version.boboplugin"
+          gh release create "$TAG" "$archive" "$archive.sha256" --verify-tag --title "$TAG" --generate-notes
