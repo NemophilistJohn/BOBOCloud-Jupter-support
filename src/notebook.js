@@ -399,12 +399,15 @@ export async function activate(context) {
     return saving;
   }
 
-  function sendProjection(value) {
-    analysisWork = analysisWork.catch(() => {}).then(async () => {
+  function sendProjection(value, request) {
+    // The document bridge allows one analysis operation at a time, including completion.
+    const work = analysisWork.then(async () => {
       if (!valid || projection !== value) return;
       await context.analyze({ kind: 'update', revision: value.revision, text: value.text });
+      if (request && valid && projection === value) return context.analyze(request);
     });
-    return analysisWork;
+    analysisWork = work.catch(() => {});
+    return work;
   }
 
   function scheduleAnalysis() {
@@ -437,9 +440,7 @@ export async function activate(context) {
     const before = value.slice(0, cursor).split('\n');
     const line = before.length - 1;
     if (range.lines[line] !== range.sourceLines[line]) return [];
-    await sendProjection(current);
-    if (projection !== current) return [];
-    const items = await context.analyze({ kind: 'complete', revision: current.revision,
+    const items = await sendProjection(current, { kind: 'complete', revision: current.revision,
       line: range.line + line, character: before.at(-1).length });
     return projection === current ? items : [];
   }
@@ -615,9 +616,10 @@ export async function activate(context) {
       built = true;
       const body = node('div', 'nb-cell-body');
       if (edit?.entry === entry) {
+        const python = kind === 'code' && isPython(notebook.language);
         const editor = createCellEditor({ entry, edit, t, language: kind === 'code' ? notebook.language : undefined,
           onChange: (text) => updateSource(entry, text),
-          complete: kind === 'code' && context.analyze && isPython(notebook.language) ? (cursor, text) => complete(entry, cursor, text) : null,
+          python, complete: python && context.analyze ? (cursor, text) => complete(entry, cursor, text) : null,
           finish: () => leaveEdit(false) });
         editor.querySelector('textarea').readOnly = !!saving || !!running || restarting;
         body.append(editor);

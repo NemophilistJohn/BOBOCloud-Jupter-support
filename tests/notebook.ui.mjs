@@ -186,9 +186,16 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   assert.equal(await invalid.locator('.nb-json').textContent(), broken);
   const empty = await open('empty.ipynb');
   await expect(empty.getByText('This notebook has no cells.')).toBeVisible();
+  await page.evaluate(() => window.BOBO.lsp.setMode('local'));
   await empty.getByRole('button', { name: 'Append code cell' }).click();
-  await expect(empty.getByRole('textbox')).toBeFocused();
-  await empty.getByRole('textbox').fill('42');
+  const emptyCell = empty.getByRole('textbox');
+  await expect(emptyCell).toBeFocused();
+  await emptyCell.press('i');
+  await emptyCell.press('m');
+  await expect(empty.getByRole('button', { name: 'import', exact: true })).toBeVisible();
+  await emptyCell.press('Tab');
+  await expect(emptyCell).toHaveValue('import');
+  await emptyCell.fill('42');
   const insert = empty.locator('.nb-insert');
   await empty.locator('.nb-identity').hover();
   await expect(insert.getByRole('button', { name: 'Insert Markdown' })).toHaveCSS('opacity', '0');
@@ -278,8 +285,11 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
         requestsByPosition.push(params.position);
         const lines = documents.get(params.textDocument.uri)?.text.split('\n') ?? [];
         const prefix = lines.slice(0, params.position.line).join('\n');
-        send({ jsonrpc: '2.0', id: requestId, result: { items: prefix.includes('import math as m')
-          ? [{ label: 'sqrt', insertText: 'sqrt' }] : [] } });
+        const currentLine = lines[params.position.line] ?? '';
+        const reply = (items) => send({ jsonrpc: '2.0', id: requestId, result: { items } });
+        if (currentLine === 'im') reply([{ label: 'imaginary', insertText: 'imaginary' }]);
+        else if (currentLine === 'imp') setTimeout(() => reply([{ label: 'obsolete', insertText: 'obsolete' }]), 700);
+        else reply(prefix.includes('import math as m') ? [{ label: 'sqrt', insertText: 'sqrt' }] : []);
       }
     });
   });
@@ -298,11 +308,21 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   await cell(2).getByRole('button', { name: 'Edit cell' }).click();
   const field = editor.getByRole('textbox', { name: 'Cell source' });
   await expect.poll(() => page.evaluate(() => window.BOBO.lsp.getStatus().state)).toBe('ready');
+  await field.press('Control+A');
+  await field.press('i');
+  await field.press('m');
+  await expect(editor.getByRole('button', { name: 'import', exact: true })).toBeVisible();
+  await expect(editor.getByRole('button', { name: 'imaginary', exact: true })).toBeVisible();
+  await expect(editor.getByRole('button', { name: 'import', exact: true })).toBeVisible();
+  await field.press('p');
+  await expect.poll(() => requestsByPosition.at(-1)).toEqual({ line: 2, character: 3 });
+  await field.fill('m.sq');
   await field.press('End');
   await field.press('Backspace');
   await field.press('q');
   await expect(editor.getByRole('button', { name: 'sqrt', exact: true })).toBeVisible();
-  assert.deepEqual(requestsByPosition, [{ line: 2, character: 4 }]);
+  await expect(editor.getByRole('button', { name: 'obsolete', exact: true })).toHaveCount(0);
+  assert.deepEqual(requestsByPosition, [{ line: 2, character: 2 }, { line: 2, character: 3 }, { line: 2, character: 4 }]);
   const [[uri, original]] = documents;
   assert.match(uri, /__bobo_notebook_.*\.py$/);
   pushDiagnostic(uri, original.version, 2, 'Original diagnostic');
