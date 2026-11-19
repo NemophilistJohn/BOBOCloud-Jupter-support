@@ -1,7 +1,15 @@
-export function createCellEditor({ entry, edit, t, onChange, complete, finish }) {
+import { highlightCode } from './highlight.js';
+
+const COMPLETION_PREFIX = /(?:\.|[_\p{ID_Start}][_\p{ID_Continue}]+)$/u;
+
+export function createCellEditor({ entry, edit, t, onChange, complete, finish, language }) {
   const wrapper = document.createElement('div');
   wrapper.className = 'nb-editor';
+  const surface = document.createElement('div');
+  surface.className = 'nb-editor-surface';
+  const highlighted = language ? document.createElement('pre') : null;
   const input = document.createElement('textarea');
+  input.className = 'nb-editor-input';
   input.value = entry.source;
   input.rows = Math.max(4, Math.min(18, input.value.split('\n').length + 1));
   input.spellcheck = false;
@@ -15,11 +23,30 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish })
   const feedback = document.createElement('span');
   feedback.className = 'nb-analysis-state';
   feedback.setAttribute('role', 'status');
-  wrapper.append(input, popup, feedback);
+  if (highlighted) {
+    highlighted.className = 'nb-editor-code nb-code';
+    highlighted.setAttribute('aria-hidden', 'true');
+    surface.append(highlighted);
+  }
+  surface.append(input);
+  wrapper.append(surface, popup, feedback);
   let generation = 0;
   let active = 0;
   let choices = [];
   let timer;
+
+  function syncScroll() {
+    if (!highlighted) return;
+    highlighted.scrollTop = input.scrollTop;
+    highlighted.scrollLeft = input.scrollLeft;
+  }
+
+  function paint() {
+    if (!highlighted) return;
+    const source = input.value;
+    highlightCode(highlighted, source.endsWith('\n') ? source + ' ' : source, language);
+    syncScroll();
+  }
 
   function close() {
     clearTimeout(timer);
@@ -81,12 +108,22 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish })
   function changed(trigger) {
     close();
     selection();
+    paint();
     onChange(input.value);
-    if (trigger && complete) timer = setTimeout(() => void suggest(false), 320);
+    if (trigger && complete && input.selectionStart === input.selectionEnd) {
+      const before = input.value.slice(Math.max(0, input.selectionStart - 256), input.selectionStart);
+      if (COMPLETION_PREFIX.test(before)) timer = setTimeout(() => void suggest(false), 320);
+    }
   }
 
-  input.addEventListener('input', (event) => changed(!event.isComposing && event.data === '.'));
-  input.addEventListener('compositionend', () => changed(false));
+  input.addEventListener('scroll', syncScroll);
+  input.addEventListener('input', (event) => changed(!event.isComposing &&
+    event.inputType === 'insertText' && /^(?:\.|[_\p{ID_Continue}])$/u.test(event.data ?? '')));
+  input.addEventListener('compositionstart', () => surface.classList.add('nb-editor-composing'));
+  input.addEventListener('compositionend', () => {
+    surface.classList.remove('nb-editor-composing');
+    changed(true);
+  });
   input.addEventListener('select', selection);
   input.addEventListener('click', () => { selection(); close(); });
   input.addEventListener('keyup', selection);
@@ -118,5 +155,6 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish })
       changed(false);
     } else if (!['Control', 'Meta', 'Shift', 'Alt'].includes(event.key)) close();
   });
+  paint();
   return wrapper;
 }

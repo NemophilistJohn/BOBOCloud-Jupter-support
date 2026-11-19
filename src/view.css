@@ -88,10 +88,28 @@
 .nb-code .hljs-number, .nb-code .hljs-literal, .nb-code .hljs-title { color: var(--bobo-accent, #4da3ff); }
 .nb-code .hljs-comment { color: var(--nb-muted); font-style: italic; }
 .nb-editor { padding: 8px 10px; }
-.nb-editor textarea {
-  width: 100%; min-height: 90px; max-height: 55vh; resize: vertical; display: block;
-  border: 1px solid var(--nb-line); border-radius: 4px; padding: 8px 10px;
-  background: var(--nb-paper); color: var(--nb-text); font: 12px/1.55 var(--nb-mono); tab-size: 4;
+.nb-editor-surface { position: relative; width: 100%; min-height: 90px; }
+.nb-editor-code, .nb-editor-input {
+  box-sizing: border-box; width: 100%; min-height: 90px; max-height: 55vh;
+  margin: 0; padding: 8px 10px; border: 1px solid var(--nb-line); border-radius: 4px;
+  font: 12px/1.55 var(--nb-mono); font-variant-ligatures: none;
+  tab-size: 4; white-space: pre; overflow-wrap: normal; overflow: auto;
+}
+.nb-editor-code {
+  position: absolute; inset: 0; height: 100%; pointer-events: none;
+  background: var(--nb-paper); scrollbar-color: transparent transparent;
+}
+.nb-editor-code .hljs-comment { font-style: normal; }
+.nb-editor-input {
+  position: relative; display: block; resize: vertical; outline-offset: 1px;
+  background: var(--nb-paper); color: var(--nb-text);
+}
+.nb-editor-surface:not(.nb-editor-composing) > .nb-editor-code + .nb-editor-input {
+  background: transparent; color: transparent; -webkit-text-fill-color: transparent;
+  caret-color: var(--nb-text);
+}
+.nb-editor-surface:not(.nb-editor-composing) > .nb-editor-code + .nb-editor-input::selection {
+  color: transparent; background: color-mix(in srgb, var(--nb-accent) 42%, transparent);
 }
 .nb-suggestions { border: 1px solid var(--nb-line); max-height: 142px; overflow: auto; margin-top: 4px; border-radius: 4px; background: var(--nb-raised); }
 .nb-suggestions .nb-suggestion {

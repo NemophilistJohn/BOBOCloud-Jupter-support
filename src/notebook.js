@@ -615,7 +615,7 @@ export async function activate(context) {
       built = true;
       const body = node('div', 'nb-cell-body');
       if (edit?.entry === entry) {
-        const editor = createCellEditor({ entry, edit, t,
+        const editor = createCellEditor({ entry, edit, t, language: kind === 'code' ? notebook.language : undefined,
           onChange: (text) => updateSource(entry, text),
           complete: kind === 'code' && context.analyze && isPython(notebook.language) ? (cursor, text) => complete(entry, cursor, text) : null,
           finish: () => leaveEdit(false) });

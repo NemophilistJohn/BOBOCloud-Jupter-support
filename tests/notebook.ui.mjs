@@ -216,7 +216,9 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   assert.equal(await cellRow.evaluate((row) => row.firstElementChild?.classList.contains('nb-run-cell')), true);
   await code.locator('.nb-code').dblclick();
   const editField = code.getByRole('textbox', { name: 'Cell source' });
+  await expect(code.locator('.nb-editor-code .hljs-built_in')).toHaveText('print');
   await editField.fill('print("draft")');
+  await expect(code.locator('.nb-editor-code .hljs-string')).toHaveText('"draft"');
   await editField.dblclick();
   await expect(code.locator('.nb-code')).toHaveText('print("draft")');
   await expect(editField).toHaveCount(0);
@@ -297,7 +299,8 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   const field = editor.getByRole('textbox', { name: 'Cell source' });
   await expect.poll(() => page.evaluate(() => window.BOBO.lsp.getStatus().state)).toBe('ready');
   await field.press('End');
-  await field.press('Control+Space');
+  await field.press('Backspace');
+  await field.press('q');
   await expect(editor.getByRole('button', { name: 'sqrt', exact: true })).toBeVisible();
   assert.deepEqual(requestsByPosition, [{ line: 2, character: 4 }]);
   const [[uri, original]] = documents;

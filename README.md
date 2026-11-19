@@ -7,7 +7,7 @@ Install **Notebook Preview** in Extensions → Marketplace, enable it, then open
 - Double-click a cell to edit it, and double-click again to return to the preview. The cell toolbar also supports moving and deleting cells and clearing saved code output. Undo the last deletion or clear before saving.
 - Save with the toolbar or Ctrl/Cmd+S. The host checks for external changes before writing. A conflict leaves the draft open.
 - Switch to **Original JSON** or jump to a cell from the Notebook sidebar. Original JSON displays the last loaded or saved version. Large files are shown in pages.
-- Python completion (Ctrl+Space or after a dot) and diagnostics use the configured remote analyzer when enabled. The editor analyzes code cells together in notebook order. IPython magic and shell escapes are skipped.
+- Code stays highlighted while editing, including offline. Python suggestions appear as you type or press Ctrl+Space. The configured analyzer uses code cells in notebook order for completion and diagnostics. IPython magic and shell escapes are skipped.
 - Run Python cells through the configured cloud runtime. The kernel starts on the first execution, keeps state for the open document, and stops after restart, close, idle timeout, or workspace changes. Outputs remain in the draft until saved.
 - The plugin does not load external preview resources or render widgets, scripts, or SVG. Matplotlib PNG output from a cloud run is displayed when the runtime produces it.
 
