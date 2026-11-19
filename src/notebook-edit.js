@@ -9,6 +9,21 @@ export function draftCells(notebook) {
   return notebook.cells.map((cell, slot) => ({ id: 'cell:' + slot, slot, cell, source: textOf(cell?.source) }));
 }
 
+export function newDraftCell(kind, notebook, entries) {
+  // The document view has an opaque origin; randomUUID requires a secure context.
+  const randomId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)),
+    (byte) => byte.toString(16).padStart(2, '0')).join('');
+  const id = randomId();
+  const cell = { cell_type: kind, metadata: {}, source: [] };
+  if (notebook.value.nbformat_minor >= 5) {
+    let cellId = id;
+    while (entries.some((entry) => entry.cell?.id === cellId)) cellId = randomId();
+    cell.id = cellId;
+  }
+  if (kind === 'code') Object.assign(cell, { execution_count: null, outputs: [] });
+  return { id: 'new:' + id, slot: null, cell, source: '' };
+}
+
 export const outputsOf = (entry) => entry.execution ? entry.execution.outputs : entry.cell?.outputs;
 export const executionCountOf = (entry) => entry.execution ? entry.execution.count : entry.cell?.execution_count;
 export const hasOutputs = (entry) => !!outputsOf(entry)?.length || executionCountOf(entry) != null;
@@ -29,16 +44,24 @@ export function serializeDraft(raw, entries) {
   const array = arrays?.length === 1 && arrays[0].children[1];
   if (array?.type !== 'array') throw new Error('Ambiguous notebook cells');
   const slots = array.children ?? [];
-  if (entries.length > slots.length) throw new Error('Missing source cells');
-  if (!slots.length) return raw;
-  const pieces = [bom, json.slice(0, slots[0].offset)];
+  if (!slots.length && !entries.length) return raw;
+  const start = slots[0]?.offset ?? array.offset + 1;
+  const last = slots.at(-1);
+  const end = last ? last.offset + last.length : array.offset + array.length - 1;
+  const separator = slots.length > 1
+    ? json.slice(slots[0].offset + slots[0].length, slots[1].offset)
+    : ',' + json.slice(array.offset + 1, start);
+  const pieces = [bom, json.slice(0, start)];
   for (const [index, entry] of entries.entries()) {
+    if (index) pieces.push(separator);
+    if (entry.slot === null) {
+      const cell = { ...entry.cell, source: entry.source.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? [] };
+      if (entry.execution) Object.assign(cell, { outputs: entry.execution.outputs, execution_count: entry.execution.count });
+      pieces.push(JSON.stringify(cell));
+      continue;
+    }
     const original = slots[entry.slot];
     if (!original) throw new Error('Missing source cell');
-    if (index > 0) {
-      const previous = slots[index - 1];
-      pieces.push(json.slice(previous.offset + previous.length, slots[index].offset));
-    }
     let cell = json.slice(original.offset, original.offset + original.length);
     const patches = [];
     const missing = [];
@@ -62,8 +85,7 @@ export function serializeDraft(raw, entries) {
     for (const [name, value] of missing) cell = applyEdits(cell, modify(cell, [name], value, {}));
     pieces.push(cell);
   }
-  const last = slots.at(-1);
-  pieces.push(json.slice(last.offset + last.length));
+  pieces.push(json.slice(end));
   return pieces.join('');
 }
 

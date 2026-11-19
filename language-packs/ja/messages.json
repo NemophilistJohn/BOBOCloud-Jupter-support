@@ -1,4 +1,11 @@
 {
+  "insertCode": "コードを追加",
+  "insertMarkdown": "Markdown を追加",
+  "appendCode": "末尾にコードセルを追加",
+  "appendMarkdown": "末尾に Markdown セルを追加",
+  "kernelRuntime": "クラウドの Python バージョンを選択してください。",
+  "kernelSync": "実行前にワークスペースを同期できませんでした。",
+  "kernelWorkspace": "クラウドカーネルがワークスペースにアクセスできませんでした。",
   "runAll": "すべてのセルを実行",
   "restartKernel": "カーネルを再起動",
   "clearAllOutputs": "すべての出力を消去",

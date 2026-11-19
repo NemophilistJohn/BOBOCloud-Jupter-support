@@ -124,6 +124,10 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   const navigation = page.locator('.source-control-sidebar .document-navigation');
   const modeButton = (name) => navigation.getByRole('button', { name, exact: true });
   await expect(view.getByRole('heading', { name: 'Regression notes' })).toBeVisible();
+  const cardBounds = await view.locator('.nb-cell').evaluateAll((cards) =>
+    cards.slice(0, 3).map((card) => { const bounds = card.getBoundingClientRect(); return [bounds.left, bounds.width]; }));
+  assert.ok(cardBounds[0][1] > 150);
+  assert.deepEqual(cardBounds, [cardBounds[0], cardBounds[0], cardBounds[0]]);
   await expect(modeButton('Notebook preview')).toHaveAttribute('aria-pressed', 'true');
   await expect(view.getByRole('button', { name: 'Original JSON' })).toHaveCount(0);
   await expect(navigation.locator('.document-navigation-row').first()).toHaveAttribute('data-tone', 'teal');
@@ -182,6 +186,26 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   assert.equal(await invalid.locator('.nb-json').textContent(), broken);
   const empty = await open('empty.ipynb');
   await expect(empty.getByText('This notebook has no cells.')).toBeVisible();
+  await empty.getByRole('button', { name: 'Append code cell' }).click();
+  await expect(empty.getByRole('textbox')).toBeFocused();
+  await empty.getByRole('textbox').fill('42');
+  const insert = empty.locator('.nb-insert');
+  await empty.locator('.nb-identity').hover();
+  await expect(insert.getByRole('button', { name: 'Insert Markdown' })).toHaveCSS('opacity', '0');
+  await insert.hover();
+  await expect(insert.getByRole('button', { name: 'Insert code' })).toHaveCSS('opacity', '1');
+  await insert.getByRole('button', { name: 'Insert Markdown' }).click();
+  await empty.getByRole('textbox').fill('# Middle');
+  await empty.locator('.nb-insert').first().hover();
+  await empty.locator('.nb-insert').first().getByRole('button', { name: 'Insert code' }).click();
+  await empty.getByRole('textbox').fill('43');
+  await empty.getByRole('button', { name: 'Append Markdown cell' }).click();
+  await empty.getByRole('textbox').fill('# Last');
+  await empty.getByRole('button', { name: 'Save notebook' }).click();
+  await expect(empty.getByText('Saved', { exact: true })).toBeVisible();
+  assert.deepEqual(JSON.parse(await readFile(path.join(workspace, 'empty.ipynb'), 'utf8')).cells
+    .map(({ cell_type, source }) => [cell_type, source.join('')]),
+  [['code', '42'], ['code', '43'], ['markdown', '# Middle'], ['markdown', '# Last']]);
 
   const actionsPath = path.join(workspace, 'actions.ipynb');
   await writeFile(actionsPath, raw);

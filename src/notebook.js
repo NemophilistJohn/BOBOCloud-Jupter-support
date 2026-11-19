@@ -1,9 +1,9 @@
 import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, ChevronsDown, ChevronsUp, Eraser,
-  ListEnd, ListStart, Pencil, Play, RotateCcw, Save, Search, SkipForward, Trash2, Undo2, X, createElement } from 'lucide';
+  FileCode, FileText, ListEnd, ListStart, Pencil, Play, Plus, RotateCcw, Save, Search, SkipForward, Trash2, Undo2, X, createElement } from 'lucide';
 import { CELL_PAGE_SIZE, embeddedImage, imageMimes, jsonPages, MAX_BYTES, MAX_OUTPUTS, MAX_RICH_TEXT,
   parseNotebook, plainOutput, searchCells, stripAnsi, textOf } from './notebook-model.js';
 import { markdownMarkup, mathMarkup, staticOutput } from './rich-content.js';
-import { draftCells, executionBatch, executionCountOf, hasOutputs, isPython, mapDiagnostics,
+import { draftCells, executionBatch, executionCountOf, hasOutputs, isPython, mapDiagnostics, newDraftCell,
   outputsOf, projectPython, serializeDraft } from './notebook-edit.js';
 import { highlightCode } from './highlight.js';
 import { createCellEditor } from './cell-editor.js';
@@ -103,6 +103,10 @@ export async function activate(context) {
   const runAll = button('runAll', SkipForward, () => void run('all'));
   const restart = button('restartKernel', RotateCcw, () => void restartKernel());
   const clearAll = button('clearAllOutputs', Eraser, () => clearOutput(entries));
+  const appendCode = button('appendCode', FileCode, () => insertCell('code', entries.length));
+  const appendMarkdownButton = button('appendMarkdown', FileText, () => insertCell('markdown', entries.length));
+  appendCode.dataset.kind = 'code';
+  appendMarkdownButton.dataset.kind = 'markdown';
   function shiftPage(offset) {
     if (mode === 'preview') cellPage += offset;
     else rawPage += offset;
@@ -116,7 +120,7 @@ export async function activate(context) {
   saveButton.hidden = !context.writeText;
   identity.append(saveStatus, runStatus);
   pager.append(previous, pageLabel, next);
-  utilities.append(collapse, expand, runAll, restart, clearAll, undoButton, saveButton, counter, pager);
+  utilities.append(collapse, expand, runAll, restart, clearAll, appendCode, appendMarkdownButton, undoButton, saveButton, counter, pager);
   toolbar.append(searchBox, utilities);
   search.addEventListener('input', () => {
     clearTimeout(searchTimer);
@@ -142,12 +146,13 @@ export async function activate(context) {
     runAll.disabled = locked || !executionBatch(entries, 'all').length;
     restart.disabled = !!saving || restarting;
     clearAll.disabled = locked || !entries.some(hasOutputs);
+    appendCode.disabled = appendMarkdownButton.disabled = locked;
     runStatus.textContent = kernelMessage ? t(kernelMessage.key, kernelMessage.values) : '';
     runStatus.classList.toggle('nb-error', !!kernelMessage?.error);
     view.toggleAttribute('data-running', !!running || restarting);
     const input = content.querySelector('textarea');
     if (input) input.readOnly = locked;
-    for (const control of view.querySelectorAll('.nb-cell-actions button, .nb-run-cell')) {
+    for (const control of view.querySelectorAll('.nb-cell-actions button, .nb-run-cell, .nb-insert button')) {
       if (control.dataset.inactive === undefined) control.dataset.inactive = String(control.disabled);
       control.disabled = locked || control.dataset.inactive === 'true';
     }
@@ -232,6 +237,19 @@ export async function activate(context) {
     if (!entries.length) undoButton.focus();
   }
 
+  function insertCell(kind, index) {
+    if (!context.writeText || saving || running || restarting) return;
+    const entry = newDraftCell(kind, notebook, entries);
+    entries.splice(index, 0, entry);
+    edit = { entry, initial: '' };
+    openOverrides.set(entry, true);
+    clearTimeout(searchTimer);
+    search.value = '';
+    if (saveMessage !== 'saveConflict') saveMessage = '';
+    scheduleAnalysis();
+    refresh(entry, 'textarea');
+  }
+
   function clearOutput(targets) {
     if (saving || running || restarting) return;
     const previous = [...new Set(Array.isArray(targets) ? targets : [targets])]
@@ -294,6 +312,9 @@ export async function activate(context) {
             code === 'resource_pressure' || code === 'container_unavailable' ? 'kernelCapacity' :
             code === 'kernel_closed' ? 'kernelClosed' : code === 'cell_timeout' ? 'kernelTimeout' :
             code === 'network_error' || code === 'not_configured' || code === 'unauthorized' ? 'kernelConnection' :
+            code === 'invalid_runtime' ? 'kernelRuntime' : code === 'sync_failed' ? 'kernelSync' :
+            code === 'workspace_missing' || code === 'workspace_denied' || code === 'workspace_copy_failed' ||
+              code === 'workspace_in_use' ? 'kernelWorkspace' :
             code === 'invalid_cell' ? 'kernelInvalidCell' : 'kernelFailed';
           setKernelMessage(key, { cell }, true);
           return;
@@ -640,9 +661,18 @@ export async function activate(context) {
       const single = button('runCell', Play, () => void run('one', entry), false);
       single.classList.add('nb-run-cell');
       single.disabled = !entry.source.trim();
-      row.append(single, details);
-    } else {
-      row.append(details);
+      row.append(single);
+    }
+    row.append(details);
+    if (context.writeText) {
+      const insert = node('div', 'nb-insert');
+      for (const [kind, key] of [['code', 'insertCode'], ['markdown', 'insertMarkdown']]) {
+        const add = button(key, Plus, () => insertCell(kind, index + 1), false);
+        add.dataset.kind = kind;
+        add.append(node('span', '', t(key)));
+        insert.append(add);
+      }
+      row.append(insert);
     }
     return row;
   }
@@ -700,6 +730,7 @@ export async function activate(context) {
     const supportsKernel = showCells && context.execute && isPython(notebook.language);
     runAll.hidden = restart.hidden = !supportsKernel;
     clearAll.hidden = !showCells || !context.writeText;
+    appendCode.hidden = appendMarkdownButton.hidden = !showCells || !context.writeText;
     previous.disabled = current === 0;
     next.disabled = current + 1 >= pages;
     pager.hidden = pages === 1;

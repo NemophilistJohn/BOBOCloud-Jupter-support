@@ -54,10 +54,16 @@
 .nb-pager { gap: 3px; }
 .nb-body { overflow: auto; min-width: 0; }
 .nb-cells { padding: 12px clamp(9px, 2vw, 26px) 26px; }
-.nb-cell-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; gap: 6px; margin-bottom: 10px; }
-.nb-cell-row:last-child { margin-bottom: 0; }
-.nb-cell { border: 1px solid var(--nb-line); border-top: 3px solid var(--nb-line); border-radius: 6px; overflow: hidden; }
-.nb .nb-run-cell { margin-top: 5px; color: var(--nb-code-accent); border-color: var(--nb-line); }
+.nb-cell-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; column-gap: 6px; margin-bottom: 2px; }
+.nb-cell { grid-area: 1 / 2; border: 1px solid var(--nb-line); border-top: 3px solid var(--nb-line); border-radius: 6px; overflow: hidden; }
+.nb .nb-run-cell { grid-area: 1 / 1; margin-top: 5px; color: var(--nb-code-accent); border-color: var(--nb-line); }
+.nb-insert { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; padding: 2px 0; }
+.nb-insert .nb-icon-button { width: auto; height: 25px; gap: 3px; padding: 0 6px; font-size: 11px; }
+.nb-utilities button[data-kind="code"], .nb-insert button[data-kind="code"] { color: var(--nb-code-accent); }
+.nb-utilities button[data-kind="markdown"], .nb-insert button[data-kind="markdown"] { color: var(--nb-markdown-accent); }
+@media (hover: hover) {
+  .nb-insert:not(:hover):not(:focus-within) > button { opacity: 0; }
+}
 .nb-cell[data-kind="markdown"] { border-top-color: var(--nb-markdown-accent); }
 .nb-cell[data-kind="code"] { border-top-color: var(--nb-code-accent); }
 .nb-cell > summary, .nb-outputs > summary {

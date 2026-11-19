@@ -5,7 +5,25 @@ import test from 'node:test';
 import { unzipSync } from 'fflate';
 import { embeddedImage, jsonPages, JSON_PAGE_SIZE, parseNotebook, searchCells } from '../src/notebook-model.js';
 import { markdownMarkup } from '../src/rich-content.js';
-import { draftCells, executionBatch, mapDiagnostics, projectPython, serializeDraft } from '../src/notebook-edit.js';
+import { draftCells, executionBatch, mapDiagnostics, newDraftCell, projectPython, serializeDraft } from '../src/notebook-edit.js';
+
+test('inserts cells into empty and populated notebooks without changing unrelated JSON', () => {
+  const empty = parseNotebook('\uFEFF{"nbformat":4,"nbformat_minor":5,"cells":[\r\n ],"extra":1e+03}');
+  const code = newDraftCell('code', empty, []);
+  code.source = 'x = 42\r\nx';
+  const first = serializeDraft(empty.raw, [code]);
+  assert.match(first, /^\uFEFF/);
+  assert.match(first, /"extra":1e\+03/);
+  const populated = parseNotebook(first);
+  const entries = draftCells(populated);
+  const markdown = newDraftCell('markdown', populated, entries);
+  markdown.source = '# Notes';
+  const result = parseNotebook(serializeDraft(first, [markdown, ...entries]));
+  assert.match(result.cells[0].id, /^[\w-]{1,64}$/);
+  assert.notEqual(result.cells[0].id, result.cells[1].id);
+  assert.deepEqual(result.cells[0].source, ['# Notes']);
+  assert.deepEqual(result.cells[1], { ...code.cell, source: ['x = 42\r\n', 'x'] });
+});
 
 test('edits and reorders without reserializing unknown data, outputs, or large integers', () => {
   const raw = '\uFEFF{\r\n "nbformat":4,"cells":[\r\n' +

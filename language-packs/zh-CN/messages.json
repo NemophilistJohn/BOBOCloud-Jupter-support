@@ -1,4 +1,11 @@
 {
+  "insertCode": "新增代码",
+  "insertMarkdown": "新增 Markdown",
+  "appendCode": "在末尾新增代码单元格",
+  "appendMarkdown": "在末尾新增 Markdown 单元格",
+  "kernelRuntime": "请先选择云端 Python 版本。",
+  "kernelSync": "运行前未能同步工作区。",
+  "kernelWorkspace": "云端内核无法访问工作区。",
   "runAll": "运行全部单元格",
   "restartKernel": "重启内核",
   "clearAllOutputs": "清除所有输出",

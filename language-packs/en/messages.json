@@ -1,4 +1,11 @@
 {
+  "insertCode": "Insert code",
+  "insertMarkdown": "Insert Markdown",
+  "appendCode": "Append code cell",
+  "appendMarkdown": "Append Markdown cell",
+  "kernelRuntime": "Select a cloud Python version to run this notebook.",
+  "kernelSync": "The workspace could not sync before execution.",
+  "kernelWorkspace": "The cloud kernel could not access the workspace.",
   "runAll": "Run all cells",
   "restartKernel": "Restart kernel",
   "clearAllOutputs": "Clear all outputs",
