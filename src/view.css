@@ -89,12 +89,16 @@
 .nb-code .hljs-comment { color: var(--nb-muted); font-style: italic; }
 .nb-editor { padding: 8px 10px; }
 .nb-editor-surface { position: relative; width: 100%; min-height: 90px; }
+.nb-editor-code, .nb-editor-input, .nb-caret-mirror {
+  font: 12px/1.55 var(--nb-mono); font-variant-ligatures: none;
+  tab-size: 4; white-space: pre; overflow-wrap: normal;
+}
 .nb-editor-code, .nb-editor-input {
   box-sizing: border-box; width: 100%; min-height: 90px; max-height: 55vh;
   margin: 0; padding: 8px 10px; border: 1px solid var(--nb-line); border-radius: 4px;
-  font: 12px/1.55 var(--nb-mono); font-variant-ligatures: none;
-  tab-size: 4; white-space: pre; overflow-wrap: normal; overflow: auto;
+  overflow: auto;
 }
+.nb-caret-mirror { position: fixed; top: 0; left: 0; width: max-content; height: auto; overflow: visible; visibility: hidden; }
 .nb-editor-code {
   position: absolute; inset: 0; height: 100%; pointer-events: none;
   background: var(--nb-paper); scrollbar-color: transparent transparent;
@@ -112,7 +116,11 @@
 .nb-editor-surface:not(.nb-editor-composing) > .nb-editor-code + .nb-editor-input::selection {
   color: transparent; background: color-mix(in srgb, var(--nb-accent) 42%, transparent);
 }
-.nb-suggestions { border: 1px solid var(--nb-line); max-height: 142px; overflow: auto; margin-top: 4px; border-radius: 4px; background: var(--nb-raised); }
+.nb-suggestions {
+  position: fixed; z-index: 2; width: 228px; overflow: auto; overscroll-behavior: contain;
+  padding: 2px; border: 1px solid var(--nb-line); border-radius: 5px;
+  background: var(--nb-raised); box-shadow: 0 4px 14px rgb(0 0 0 / 24%);
+}
 .nb-suggestions .nb-suggestion {
   display: block; width: 100%; border: 0; padding: 4px 9px; overflow: hidden;
   white-space: nowrap; text-overflow: ellipsis; background: transparent; text-align: start; font: 12px var(--nb-mono);

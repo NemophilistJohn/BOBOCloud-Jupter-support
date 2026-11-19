@@ -190,11 +190,48 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   await empty.getByRole('button', { name: 'Append code cell' }).click();
   const emptyCell = empty.getByRole('textbox');
   await expect(emptyCell).toBeFocused();
+  await emptyCell.fill('v = 1\n    ');
+  await emptyCell.press('End');
+  const cellHeight = await empty.locator('#cell-1').evaluate((cell) => cell.offsetHeight);
   await emptyCell.press('i');
   await emptyCell.press('m');
-  await expect(empty.getByRole('button', { name: 'import', exact: true })).toBeVisible();
-  await emptyCell.press('Tab');
-  await expect(emptyCell).toHaveValue('import');
+  const importChoice = empty.getByRole('button', { name: 'import', exact: true });
+  await expect(importChoice).toBeVisible();
+  const caretAndPopup = (field) => field.evaluate((input) => {
+    const bounds = input.getBoundingClientRect();
+    const style = getComputedStyle(input);
+    const prefix = input.value.slice(0, input.selectionStart).split('\n');
+    const measure = document.createElement('canvas').getContext('2d');
+    measure.font = style.fontSize + ' ' + style.fontFamily;
+    const top = bounds.top + input.clientTop + parseFloat(style.paddingTop) +
+      (prefix.length - 1) * parseFloat(style.lineHeight) - input.scrollTop;
+    const left = bounds.left + input.clientLeft + parseFloat(style.paddingLeft) +
+      measure.measureText(prefix.at(-1)).width - input.scrollLeft;
+    const popup = input.closest('.nb-editor').querySelector('.nb-suggestions').getBoundingClientRect();
+    const body = input.closest('.nb-body');
+    return { caret: { top, bottom: top + parseFloat(style.lineHeight), left }, popup: popup.toJSON(),
+      right: body.getBoundingClientRect().left + body.clientWidth, scroll: [input.scrollLeft, input.scrollTop] };
+  });
+  const initial = await caretAndPopup(emptyCell);
+  assert.ok(Math.abs(initial.popup.left - initial.caret.left) < 2, JSON.stringify(initial));
+  assert.ok(initial.popup.top >= initial.caret.bottom && initial.popup.top - initial.caret.bottom < 6, JSON.stringify(initial));
+  assert.equal(await empty.locator('#cell-1').evaluate((cell) => cell.offsetHeight), cellHeight);
+  await page.screenshot({ path: path.join(root, 'test-results', 'notebook-completion.png') });
+  await importChoice.click();
+  await expect(emptyCell).toHaveValue('v = 1\n    import');
+
+  const scrolledPrefix = '# filler\n'.repeat(18) + ' '.repeat(165);
+  await emptyCell.fill(scrolledPrefix + 'i');
+  await emptyCell.press('Control+End');
+  await emptyCell.press('m');
+  await expect(importChoice).toBeVisible();
+  const scrolled = await caretAndPopup(emptyCell);
+  assert.ok(scrolled.scroll.every((offset) => offset > 0), JSON.stringify(scrolled));
+  assert.ok(scrolled.popup.left <= scrolled.caret.left && scrolled.caret.left <= scrolled.popup.right, JSON.stringify(scrolled));
+  assert.ok(scrolled.popup.right <= scrolled.right, JSON.stringify(scrolled));
+  await emptyCell.press('ArrowDown');
+  await emptyCell.press('Enter');
+  await expect(emptyCell).toHaveValue(scrolledPrefix + 'import');
   await emptyCell.fill('42');
   const insert = empty.locator('.nb-insert');
   await empty.locator('.nb-identity').hover();

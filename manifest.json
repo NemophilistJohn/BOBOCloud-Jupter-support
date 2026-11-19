@@ -3,7 +3,7 @@
   "id": "bobocloud.notebook-preview",
   "displayName": "Notebook Preview",
   "description": "Open, edit, and run Python notebooks with sidebar navigation and offline previews.",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "engines": { "bobocloud": ">=2.8.1 <2.9.0", "pluginApi": "^1.10.0" },
   "main": "dist/extension.js",
   "activationEvents": ["onStartupFinished"],

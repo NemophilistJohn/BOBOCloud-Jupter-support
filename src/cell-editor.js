@@ -2,6 +2,32 @@ import { highlightCode, MAX_HIGHLIGHT_LENGTH, pythonCompletions } from './highli
 
 const COMPLETION_PREFIX = /(?:\.|(?<![\p{ID_Continue}])[_\p{ID_Start}][\p{ID_Continue}]*)$/u;
 const MAX_CHOICES = 60;
+const POPUP_HEIGHT = 144;
+const POPUP_GAP = 3;
+const VIEWPORT_MARGIN = 6;
+const CARET_EDGE_TOLERANCE = 2;
+
+function caretBounds(input, mirror) {
+  const cursor = input.selectionStart;
+  const value = input.value;
+  const before = value.slice(0, cursor).split('\n');
+  const bounds = input.getBoundingClientRect();
+  const style = getComputedStyle(input);
+  const height = parseFloat(style.lineHeight);
+  const line = before.at(-1);
+  const lineEnd = value.indexOf('\n', cursor);
+  const text = (line + value.slice(cursor, lineEnd < 0 ? value.length : lineEnd)) || ' ';
+  if (mirror.textContent !== text) mirror.textContent = text;
+  const range = document.createRange();
+  range.setStart(mirror.firstChild, line.length);
+  range.collapse(true);
+  const offset = range.getBoundingClientRect().left - mirror.getBoundingClientRect().left;
+  return {
+    left: bounds.left + input.clientLeft + parseFloat(style.paddingLeft) + offset - input.scrollLeft,
+    top: bounds.top + input.clientTop + parseFloat(style.paddingTop) + (before.length - 1) * height - input.scrollTop,
+    height
+  };
+}
 
 export function createCellEditor({ entry, edit, t, onChange, complete, finish, language, python }) {
   const wrapper = document.createElement('div');
@@ -21,6 +47,9 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish, l
   popup.className = 'nb-suggestions';
   popup.hidden = true;
   popup.setAttribute('aria-label', t('suggestions'));
+  const mirror = document.createElement('span');
+  mirror.className = 'nb-caret-mirror';
+  mirror.setAttribute('aria-hidden', 'true');
   const feedback = document.createElement('span');
   feedback.className = 'nb-analysis-state';
   feedback.setAttribute('role', 'status');
@@ -30,12 +59,13 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish, l
     surface.append(highlighted);
   }
   surface.append(input);
-  wrapper.append(surface, popup, feedback);
+  wrapper.append(surface, popup, mirror, feedback);
   let generation = 0;
   let active = 0;
   let choices = [];
   let timer;
   let composing = false;
+  let tracking;
 
   function syncScroll() {
     if (!highlighted) return;
@@ -55,6 +85,8 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish, l
     generation += 1;
     feedback.textContent = '';
     popup.hidden = true;
+    tracking?.();
+    tracking = undefined;
   }
 
   function selection() {
@@ -64,7 +96,55 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish, l
 
   function showChoice() {
     [...popup.children].forEach((item, index) => item.classList.toggle('selected', index === active));
-    popup.children[active]?.scrollIntoView({ block: 'nearest' });
+    const item = popup.children[active];
+    if (!item) return;
+    const bounds = item.getBoundingClientRect();
+    const top = popup.getBoundingClientRect().top + popup.clientTop;
+    if (bounds.top < top) popup.scrollTop += bounds.top - top;
+    else if (bounds.bottom > top + popup.clientHeight) popup.scrollTop += bounds.bottom - top - popup.clientHeight;
+  }
+
+  function positionPopup() {
+    const body = input.closest('.nb-body');
+    if (popup.hidden || !body || input.readOnly || document.activeElement !== input) return close();
+    const bodyBounds = body.getBoundingClientRect();
+    const viewTop = Math.max(0, bodyBounds.top) + VIEWPORT_MARGIN;
+    const viewBottom = Math.min(window.innerHeight, bodyBounds.top + body.clientHeight) - VIEWPORT_MARGIN;
+    const viewLeft = Math.max(0, bodyBounds.left) + VIEWPORT_MARGIN;
+    const viewRight = Math.min(window.innerWidth, bodyBounds.left + body.clientWidth) - VIEWPORT_MARGIN;
+    const bounds = input.getBoundingClientRect();
+    const caret = caretBounds(input, mirror);
+    const caretBottom = caret.top + caret.height;
+    // Scroll offsets and client dimensions round differently at fractional zoom.
+    const textLeft = bounds.left + input.clientLeft;
+    if (caret.left < Math.max(textLeft, viewLeft) - CARET_EDGE_TOLERANCE ||
+        caret.left > Math.min(textLeft + input.clientWidth, viewRight) + CARET_EDGE_TOLERANCE ||
+        caretBottom <= Math.max(bounds.top, viewTop) || caret.top >= Math.min(bounds.top + input.clientHeight, viewBottom)) return close();
+
+    popup.style.maxWidth = Math.max(0, viewRight - viewLeft) + 'px';
+    const fullHeight = Math.min(POPUP_HEIGHT, popup.scrollHeight + popup.offsetHeight - popup.clientHeight);
+    const below = viewBottom - caretBottom - POPUP_GAP;
+    const above = caret.top - viewTop - POPUP_GAP;
+    const opensAbove = below < fullHeight && above > below;
+    const room = opensAbove ? above : below;
+    if (room < Math.min(fullHeight, 24)) return close();
+
+    popup.style.maxHeight = Math.min(POPUP_HEIGHT, room) + 'px';
+    popup.style.left = Math.max(viewLeft, Math.min(caret.left, viewRight - popup.offsetWidth)) + 'px';
+    popup.style.top = (opensAbove ? caret.top - POPUP_GAP - popup.offsetHeight : caretBottom + POPUP_GAP) + 'px';
+  }
+
+  function trackPopup() {
+    if (tracking) return;
+    const events = new AbortController();
+    const options = { passive: true, signal: events.signal };
+    const body = input.closest('.nb-body');
+    body.addEventListener('scroll', positionPopup, options);
+    input.addEventListener('scroll', positionPopup, options);
+    const observer = new ResizeObserver(positionPopup);
+    observer.observe(body);
+    observer.observe(input);
+    tracking = () => { events.abort(); observer.disconnect(); };
   }
 
   function accept(index) {
@@ -99,7 +179,11 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish, l
     });
     popup.hidden = false;
     active = Math.max(0, choices.findIndex((item) => item.insertText === selected));
-    showChoice();
+    positionPopup();
+    if (!popup.hidden) {
+      trackPopup();
+      showChoice();
+    }
   }
 
   function localChoices(cursor, value) {
@@ -199,5 +283,5 @@ export function createCellEditor({ entry, edit, t, onChange, complete, finish, l
     } else if (!['Control', 'Meta', 'Shift', 'Alt'].includes(event.key)) close();
   });
   paint();
-  return wrapper;
+  return { element: wrapper, dispose: close };
 }

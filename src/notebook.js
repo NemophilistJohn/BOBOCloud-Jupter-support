@@ -62,6 +62,7 @@ export async function activate(context) {
   let searchTimer;
   let entries = [];
   let edit;
+  let disposeCellEditor;
   let saving;
   let saveMessage = '';
   let running;
@@ -621,8 +622,9 @@ export async function activate(context) {
           onChange: (text) => updateSource(entry, text),
           python, complete: python && context.analyze ? (cursor, text) => complete(entry, cursor, text) : null,
           finish: () => leaveEdit(false) });
-        editor.querySelector('textarea').readOnly = !!saving || !!running || restarting;
-        body.append(editor);
+        disposeCellEditor = editor.dispose;
+        editor.element.querySelector('textarea').readOnly = !!saving || !!running || restarting;
+        body.append(editor.element);
       } else if (kind === 'markdown') appendMarkdown(body, source, cell?.attachments);
       else if (kind === 'code') {
         const pre = node('pre', 'nb-code');
@@ -714,6 +716,8 @@ export async function activate(context) {
   });
 
   function draw(preserveScroll = false) {
+    disposeCellEditor?.();
+    disposeCellEditor = undefined;
     currentDetails.clear();
     const scrollTop = preserveScroll ? content.scrollTop : 0;
     if (!preserveScroll) content.scrollTop = 0;
@@ -778,6 +782,7 @@ export async function activate(context) {
     clearTimeout(searchTimer);
     clearTimeout(analysisTimer);
     valid = false;
+    disposeCellEditor?.();
     subscription.dispose();
     styling.remove();
     root.replaceChildren();
