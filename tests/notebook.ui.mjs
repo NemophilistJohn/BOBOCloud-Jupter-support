@@ -9,6 +9,7 @@ import test from 'node:test';
 const root = path.resolve(import.meta.dirname, '..');
 const host = path.resolve(process.env.BOBOCLOUD_HOST_CLIENT || path.join(root, '..', 'my-electron-app', 'client'));
 const { version } = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
+const { version: hostVersion } = JSON.parse(await readFile(path.join(host, 'package.json'), 'utf8'));
 const archive = path.join(root, 'artifacts', 'bobocloud.notebook-preview-' + version + '.boboplugin');
 const general = path.resolve(process.env.BOBOCLOUD_GENERAL_PREVIEW_ARTIFACT || path.join(
   root, '..', 'bobocloud-document-preview', 'artifacts', 'bobocloud.document-preview-1.1.1.boboplugin'
@@ -88,15 +89,18 @@ test('real Electron installs, renders, localizes and disposes the isolated noteb
   }, workspace);
   const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
   const installer = createPluginController({
-    app: { getPath: () => userData, getVersion: () => '2.8.1' },
+    app: { getPath: () => userData, getVersion: () => hostVersion },
     ipcMain: { handle() {} }, getWindow: () => null,
-    getWorkspaceIdentity: () => ({ rootPath: workspace, workspaceIdentity: 1 }), hostVersion: '2.8.1'
+    getWorkspaceIdentity: () => ({ rootPath: workspace, workspaceIdentity: 1 }), hostVersion
   });
   const generalId = 'bobocloud.document-preview';
   await installer.installArchiveFromPath(general);
   const installed = await installer.installArchiveFromPath(archive);
   assert.equal(installed.id, id);
-  assert.equal(installed.status, 'disabled');
+  // Start the activation checks from an explicit disabled state on hosts that
+  // automatically enable newly installed, verified packages.
+  const disabled = await installer.setEnabled(id, false);
+  assert.equal(disabled.status, 'disabled');
   await page.evaluate(async (pluginIds) => {
     await window.api.plugins.refresh();
     for (const pluginId of pluginIds) await window.api.plugins.enable(pluginId);

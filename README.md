@@ -1,6 +1,6 @@
 # BOBOCloud Notebook Preview
 
-Install **Notebook Preview** in Extensions → Marketplace, enable it, then open an `.ipynb` file in the workspace. Version 1.3 needs BOBOCloud 2.8.1 with Plugin API 1.10 or later. You can also import the package from [Releases](https://github.com/NemophilistJohn/BOBOCloud-Jupter-support/releases); API 1.8 hosts can use version 1.1.0.
+Install **Notebook Preview** in Extensions → Marketplace, enable it, then open an `.ipynb` file in the workspace. Version 1.3.6 supports BOBOCloud 2.8.1 and later, including 2.9.0, with Plugin API 1.10 or later. You can also import the package from [Releases](https://github.com/NemophilistJohn/BOBOCloud-Jupter-support/releases); API 1.8 hosts can use version 1.1.0.
 
 - Preview format 4 notebook code with offline syntax highlighting, Markdown, TeX math, saved text and tracebacks, raster images, and static tables.
 - Jump to a cell from the outline, collapse cells and outputs, or filter by source and saved text. The toolbar expands or collapses the current page.
